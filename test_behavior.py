@@ -7,11 +7,12 @@ import hashlib
 import random
 from unittest.mock import patch
 from types import SimpleNamespace
-from PySide6.QtCore import Qt, QPointF
-from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import Qt, QPointF, QTimer
+from PySide6.QtWidgets import QApplication, QSpinBox, QLineEdit, QCheckBox
 from PySide6.QtGui import QImage, QPainter
-from main import Pup, SLEEP_SECONDS
+from main import Pup, Manager, Dropping, SLEEP_SECONDS
 from artwork import draw_dog
+from shiboken6 import isValid
 from appearance import Appearance
 
 
@@ -265,6 +266,83 @@ class BehaviorTests(unittest.TestCase):
         for _ in range(100):
             self.pup.animate_ears(.1)
         self.assertAlmostEqual(self.pup.ear_angle,0,places=2)
+
+    def test_dropping_default_is_three_hours_and_changes_preserve_age(self):
+        dropping = Dropping(100,800)
+        try:
+            self.assertEqual(dropping.lifetime_minutes,180)
+            self.assertGreater(dropping.removal_timer.interval(),10799000)
+            self.assertLessEqual(dropping.removal_timer.interval(),10800000)
+            dropping.set_lifetime(60,now=dropping.created_at+120)
+            self.assertEqual(dropping.removal_timer.interval(),3480000)
+            dropping.set_lifetime(1,now=dropping.created_at+70)
+            self.assertEqual(dropping.removal_timer.interval(),0)
+            self.app.processEvents()
+            self.assertTrue(not isValid(dropping) or not dropping.isVisible())
+        finally:
+            if isValid(dropping):
+                dropping.close()
+
+    def test_dropping_is_behind_rump_in_both_directions_for_every_model(self):
+        self.pup.ground=lambda:(0,800,1200)
+        self.manager.dropping_minutes=90
+        for style in range(4):
+            centers=[]
+            for direction in (1,-1):
+                self.pup.appearance=Appearance(style,1,1,1)
+                self.pup.direction=direction
+                self.pup.xf=300
+                self.pup.yf=702
+                self.pup.state='poop'
+                self.pup.deadline=self.now-1
+                self.step()
+                pile=self.manager.droppings[-1]
+                centers.append(pile.x()+15-self.pup.xf)
+                self.assertEqual(pile.y()+pile.height(),self.pup.yf+98)
+                self.assertEqual(pile.lifetime_minutes,90)
+            self.assertLess(centers[0],30)
+            self.assertGreater(centers[1],130)
+            self.assertEqual(sum(centers),160)
+
+    def test_names_are_saved_escaped_and_optional_in_tooltip(self):
+        self.pup.name='Бублик <3 & Плюша'
+        other=Pup(self.manager,self.pup.serialize(self.now))
+        try:
+            self.assertEqual(other.name,self.pup.name)
+            other.refresh_tooltip()
+            self.assertIn('Бублик &lt;3 &amp; Плюша',other.toolTip())
+            self.manager.show_names=False
+            other.refresh_tooltip()
+            self.assertNotIn('Бублик',other.toolTip())
+            self.assertIn('Голод',other.toolTip())
+        finally:
+            other.close()
+
+    def test_settings_apply_names_and_cleanup_and_cancel_is_reversible(self):
+        manager=Manager.__new__(Manager)
+        manager.minutes=10
+        manager.dropping_minutes=180
+        manager.show_names=True
+        manager.pups=[self.pup]
+        manager.droppings=[]
+        manager.save=lambda:None
+        def edit(accept):
+            d=self.app.activeModalWidget()
+            d.findChildren(QSpinBox)[1].setValue(240)
+            d.findChild(QLineEdit).setText('Плюша')
+            d.findChild(QCheckBox).setChecked(False)
+            d.accept() if accept else d.reject()
+        original=self.pup.name
+        QTimer.singleShot(0,lambda:edit(False))
+        manager.settings()
+        self.assertEqual(self.pup.name,original)
+        self.assertEqual(manager.dropping_minutes,180)
+        self.assertTrue(manager.show_names)
+        QTimer.singleShot(0,lambda:edit(True))
+        manager.settings()
+        self.assertEqual(self.pup.name,'Плюша')
+        self.assertEqual(manager.dropping_minutes,240)
+        self.assertFalse(manager.show_names)
 
 
 if __name__ == '__main__':

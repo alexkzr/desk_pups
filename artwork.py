@@ -9,6 +9,17 @@ from PySide6.QtGui import QColor, QLinearGradient, QPainterPath, QPen
 from appearance import Appearance
 
 
+def model_scale(appearance):
+    return ((1,1),(.94,1.10),(1,1),(1,.98))[appearance.style]
+
+
+def rear_drop_offset(appearance, direction):
+    # The pile's centre belongs just behind the rump, not at a sprite origin.
+    sx,_ = model_scale(appearance)
+    x = 80+(20-80)*sx
+    return 160-x if direction < 0 else x
+
+
 def ellipse(p, x, y, w, h, color):
     p.setPen(Qt.NoPen)
     p.setBrush(QColor(color))
@@ -121,20 +132,22 @@ class Artist:
             shape = path([(x,y),(x-13,y+3,x-23,y+4,x-28,y+1),
                           (x-27,y+7,x-12,y+7,x+3,y+4)])
         else:
-            shape = path([(x+2,y+4),(x-10,y+3,x-17,y-5,x-17,y-18-swing),
-                          (x-21,y-6,x-16,y+5,x-3,y+10),(x+4,y+9)])
+            width = 3 if self.look.fur else 0
+            shape = path([(x+2,y+2),(x-11,y+1,x-18,y-8,x-19,y-20-swing),
+                          (x-23-width,y-7,x-15-width,y+8,x+2,y+7)])
         self.fill(shape,5,tone=self.base)
-        if self.look.fur:
-            fringe = path([(x-5,y+2),(x-13,y+7,x-21,y-1,x-20,y-10),
-                           (x-26,y-3,x-18,y+11,x-5,y+9)])
-            self.fill(fringe,6)
 
     def leg(self, x, root, foot_x, floor, far=False):
         tone = self.shade if far else self.base
-        shape = path([(x-5,root),(x-7,root+7,foot_x-5,floor-7,foot_x-5,floor-3),
-                      (foot_x-5,floor+1,foot_x+11,floor+1,foot_x+10,floor-2),
-                      (foot_x+9,floor-5,foot_x+3,floor-4,foot_x+3,floor-8),
-                      (x+6,root+8,x+6,root+2,x+5,root)])
+        knee = x+(foot_x-x)*.4
+        mid = (root+floor)*.5
+        feather = 1.7 if self.look.fur else 0
+        shape = path([(x-4,root),
+                      (x-4-feather,root+4,knee-4-feather,mid,foot_x-3.5,floor-5),
+                      (foot_x-4.5,floor-2,foot_x-4,floor-.5,foot_x-1,floor),
+                      (foot_x+2,floor+.3,foot_x+7,floor+.3,foot_x+7,floor-1.7),
+                      (foot_x+7,floor-3.5,foot_x+4,floor-4,foot_x+2.5,floor-4.5),
+                      (knee+4,mid,x+4,root+4,x+4,root)])
         self.fill(shape,10 if far else 11,tone=tone,outline=False)
         if self.look.coat:
             self.p.save()
@@ -143,10 +156,6 @@ class Artist:
             self.p.restore()
         if not far:
             stroke(self.p,((foot_x+4,floor-2),(foot_x+4,floor-.5)),self.shade,.55)
-        if self.look.fur:
-            fringe = path([(x-5,root+5),(x-11,root+13,x-4,root+17,x-7,root+21),
-                           (x+1,root+18,x+2,root+13,x+4,root+8)])
-            self.fill(fringe,12,tone=tone,outline=False)
 
     def ear(self, x, y, length, width, angle, far=False):
         p = self.p
@@ -155,20 +164,14 @@ class Artist:
         p.rotate(angle)
         length = length+(4 if self.look.fur else 0)
         ear = path([(0,0),(-width*.75,2,-width*.65,length*.44,-width*.7,length*.72),
-                    (-width*.8,length+4,width*.48,length+7,width*.63,length*.70),
+                    (-width*.8,length+3,width*.48,length+4,width*.63,length*.70),
                     (width*.76,length*.38,width*.43,-3,0,0)])
         self.fill(ear,20 if far else 21,tone=self.shade if far else self.base)
         if self.look.fur:
-            fringe = path([(-width*.66,length*.40),
-                           (-width*.85,length*.65,-width*.7,length*.95,-width*.86,length+2),
-                           (-width*.30,length-1,-width*.25,length+6,0,length+5),
-                           (-width*.1,length,width*.35,length+7,width*.52,length-1),
-                           (width*.65,length*.7,width*.35,length*.5,0,length*.4)])
-            self.fill(fringe,22,tone=self.base)
-            for dx in (-3,1,4):
+            for dx in (-2,2):
                 line=QPainterPath(QPointF(dx, length*.40))
-                line.cubicTo(dx-4,length*.65,dx+1,length*.85,dx-1,length+1)
-                self.detail(line,self.shade,.55)
+                line.cubicTo(dx-2,length*.65,dx+1,length*.8,dx,length*.9)
+                self.detail(line,self.shade,.4)
         highlight=QPainterPath(QPointF(-width*.3,5))
         highlight.cubicTo(-width*.55,length*.3,-width*.55,length*.65,-width*.35,length*.8)
         self.detail(highlight,QColor(self.light).name(),.65)
@@ -202,7 +205,11 @@ class Artist:
         eye_x = 21-front*3
         eye_y = 7
         if self.look.coat:
-            ellipse(p,eye_x-2,eye_y-4,6,3,self.tan)
+            # In profile the muzzle is the inner side of this visible brow.
+            brow=path([(eye_x-2,eye_y-2),
+                       (eye_x-1,eye_y-4,eye_x+2,eye_y-6,eye_x+4,eye_y-5),
+                       (eye_x+5,eye_y-3,eye_x+1,eye_y-2,eye_x-2,eye_y-1)])
+            self.fill(brow,35,tone=self.tan,patterned=False,outline=False)
         if sleeping:
             eyelid=QPainterPath(QPointF(eye_x-1,eye_y+3))
             eyelid.quadTo(eye_x+2,eye_y+5,eye_x+5,eye_y+2)
@@ -214,7 +221,9 @@ class Artist:
             if front > .5:
                 ellipse(p,12,8,2.8,4.1,'#241c1a')
                 if self.look.coat:
-                    ellipse(p,11,4,4,2.5,self.tan)
+                    other_brow=path([(11,6),(11,4,13,2,15,3),
+                                     (16,4,14,5,11,6)])
+                    self.fill(other_brow,36,tone=self.tan,patterned=False,outline=False)
         nose = path([(42,9),(45,6,50,8,49,11),(48,16,44,17,42,13)])
         self.fill(nose,32,tone='#35231f',patterned=False,outline=False)
         ellipse(p,44,8.7,2.8,1.2,'#8f7366')
@@ -222,15 +231,13 @@ class Artist:
         smile.quadTo(35,25,40,20)
         self.detail(smile,'#64351f',.8)
         if running:
-            mouth=path([(29,22),(34,23,39,21,41,19),(38,30,33,31,29,22)])
+            mouth=path([(30,22),(34,24,38,22,40,20),
+                        (39,26,34,28,30,22)])
             self.fill(mouth,33,tone='#623127',patterned=False,outline=False)
             ellipse(p,34,25,6,2.4,'#df8c78')
         self.ear(4,7,29 if self.look.style != 1 else 31,9 if not plush else 10,
                  self.ear_angle,False)
-        if self.look.fur:
-            beard=path([(25,27),(27,31,28,30,30,34),(32,31,35,31,37,28),
-                        (33,29,29,28,25,27)])
-            self.fill(beard,34,tone=self.tan if self.look.coat else self.light,patterned=False)
+        # Long-haired dachshunds have soft ear feathering, not a pointed beard.
         p.restore()
 
     def body(self, shape, chest=None):
@@ -242,11 +249,12 @@ class Artist:
             self.p.restore()
         if self.look.fur:
             b = shape.boundingRect()
-            x,y,w = b.left()+8,b.bottom()-7,b.width()-18
-            fringe = path([(x,y),(x+w*.2,y+7,x+w*.2,y+10,x+w*.3,y+5),
-                           (x+w*.4,y+10,x+w*.55,y+6,x+w*.58,y+9),
-                           (x+w*.65,y+4,x+w*.8,y+9,x+w,y-1),
-                           (x+w,y-4,x,y-4,x,y)])
+            x,y,w = b.left()+9,min(94,b.bottom()-4),b.width()-21
+            fringe = path([(x,y-3),
+                           (x+w*.15,y+1,x+w*.2,y+3,x+w*.34,y+1),
+                           (x+w*.46,y+4,x+w*.54,y+3,x+w*.65,y+1),
+                           (x+w*.8,y+3,x+w*.94,y+1,x+w,y-3),
+                           (x+w*.7,y-5,x+w*.3,y-5,x,y-3)])
             self.fill(fringe,3,outline=False)
 
     def standing(self, state):
@@ -254,7 +262,7 @@ class Artist:
         run=state=='zoomies'
         eating=state=='eat'
         low=state in ('lie','stretch')
-        gait=self.phase*(18 if run else 8)
+        gait=self.phase*(14 if run else 8)
         bob=(-abs(math.sin(gait))*5 if run else math.sin(gait)*.7) if state in ('walk','zoomies') else 0
         p.save()
         if eating:
@@ -262,9 +270,9 @@ class Artist:
         root=82+bob if not low else 90
         self.tail(28,72+bob if not low else 86,run,low)
         for index,x in enumerate((43,108)):
-            swing=math.sin(gait+index*2.3+math.pi)
-            foot=x+swing*(15 if run else 4) if state in ('walk','zoomies') else x
-            lift=max(0,-math.cos(gait+index*2.3+math.pi))*(7 if run else 2)
+            angle=gait+(index*.6 if run else index*math.pi)+math.pi
+            foot=x+math.cos(angle)*(10 if run else 4) if state in ('walk','zoomies') else x
+            lift=max(0,math.sin(angle))*(6 if run else 2) if state in ('walk','zoomies') else 0
             self.leg(x,root,foot,98-lift,True)
         top = (65 if self.look.style == 2 else 63)+bob if not low else 71
         neck = 7 if eating else (10 if low else 24)
@@ -282,9 +290,9 @@ class Artist:
                     (110,top+11,112,top-5,112,top-neck+5)])
         self.body(body,chest)
         for index,x in enumerate((36,111)):
-            swing=math.sin(gait+index*2.3)
-            foot=x+swing*(15 if run else 4) if state in ('walk','zoomies') else x
-            lift=max(0,-math.cos(gait+index*2.3))*(7 if run else 2)
+            angle=gait+(index*.6 if run else index*math.pi)
+            foot=x+math.cos(angle)*(10 if run else 4) if state in ('walk','zoomies') else x
+            lift=max(0,math.sin(angle))*(6 if run else 2) if state in ('walk','zoomies') else 0
             self.leg(x,root,foot,98-lift)
         if eating:
             self.head(116,59+math.sin(self.phase*7),27)
@@ -363,7 +371,7 @@ def draw_dog(p, state, phase, sit_pose=0, wake_progress=0, appearance=None, ear_
     p.save()
     p.setPen(Qt.NoPen)
     appearance = appearance or Appearance()
-    sx,sy=((1,1),(.94,1.10),(1,1),(1,.98))[appearance.style]
+    sx,sy=model_scale(appearance)
     p.translate(80,98)
     p.scale(sx,sy)
     p.translate(-80,-98)

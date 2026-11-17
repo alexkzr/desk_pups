@@ -2,6 +2,7 @@
 from __future__ import annotations
 import argparse
 import ctypes
+import html
 from ctypes import wintypes
 import json
 import math
@@ -14,12 +15,20 @@ import time
 from PySide6.QtCore import Qt, QTimer, QPoint
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QIcon, QPixmap, QFont
 from PySide6.QtWidgets import (QApplication, QWidget, QMenu, QSystemTrayIcon,
-    QDialog, QFormLayout, QSpinBox, QComboBox, QDialogButtonBox, QMessageBox)
-from artwork import draw_bed, draw_dog
+    QDialog, QFormLayout, QSpinBox, QComboBox, QCheckBox, QLineEdit, QDialogButtonBox, QMessageBox)
+from artwork import draw_bed, draw_dog, rear_drop_offset
 from appearance import Appearance, STYLES, COATS, FURS
 
 DATA = Path(os.environ.get('LOCALAPPDATA', str(Path.home()))) / 'Takson'
 SLEEP_SECONDS = 20 * 60
+DEFAULT_DROPPING_MINUTES = 180
+
+
+def setting_int(value, default, minimum, maximum):
+    try:
+        return max(minimum,min(maximum,int(value)))
+    except (ValueError,TypeError,OverflowError):
+        return default
 
 
 class Bed(QWidget):
@@ -100,14 +109,24 @@ def window_tops(excluded):
 
 
 class Dropping(QWidget):
-    def __init__(self, x, y):
+    def __init__(self, x, y, minutes=DEFAULT_DROPPING_MINUTES):
         super().__init__(None, Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.WindowDoesNotAcceptFocus)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_DeleteOnClose)
         self.setFixedSize(30, 28)
         self.move(x, y-28)
+        self.created_at = time.monotonic()
+        self.removal_timer = QTimer(self)
+        self.removal_timer.setTimerType(Qt.PreciseTimer)
+        self.removal_timer.setSingleShot(True)
+        self.removal_timer.timeout.connect(self.close)
+        self.set_lifetime(minutes)
         self.show()
-        QTimer.singleShot(60000, self.close)
+    def set_lifetime(self, minutes, now=None):
+        now = time.monotonic() if now is None else now
+        self.lifetime_minutes = setting_int(minutes,DEFAULT_DROPPING_MINUTES,1,1440)
+        self.expires_at = self.created_at+self.lifetime_minutes*60
+        self.removal_timer.start(max(0,math.ceil((self.expires_at-now)*1000)))
     def mousePressEvent(self, event):
         self.close()
     def paintEvent(self, event):
@@ -127,6 +146,8 @@ class Pup(QWidget):
         self.setFixedSize(160, 112)
         self.hunger = bounded((saved or {}).get('hunger'), random.uniform(5,25))
         self.energy = bounded((saved or {}).get('energy'), 90)
+        value = (saved or {}).get('name')
+        self.name = value.strip()[:40] if isinstance(value,str) and value.strip() else f'Такса {len(getattr(manager,"pups",[]))+1}'
         self.appearance = Appearance.restore((saved or {}).get('appearance'))
         self.ear_angle = 0.
         self.ear_velocity = 0.
@@ -167,9 +188,16 @@ class Pup(QWidget):
 
     def serialize(self, now=None):
         now = time.monotonic() if now is None else now
-        return {'hunger':self.hunger,'energy':self.energy,
+        return {'hunger':self.hunger,'energy':self.energy,'name':self.name,
                 'appearance':self.appearance.serialize(),
                 'sleep_remaining':max(0,self.deadline-now) if self.state == 'sleep' else 0}
+
+    def refresh_tooltip(self):
+        lines = [self.name] if getattr(self.manager,'show_names',True) else []
+        lines += [self.appearance.description,
+                  f'Голод {self.hunger:.0f}% · Энергия {self.energy:.0f}%',
+                  'Перетащите мышью · ПКМ — меню']
+        self.setToolTip('<qt>'+html.escape('\n'.join(lines)).replace('\n','<br>')+'</qt>')
 
     def can_zoom(self):
         left,_,right = self.ground()
@@ -261,7 +289,7 @@ class Pup(QWidget):
         self.phase += dt
         self.animate_ears(dt)
         self.hunger = min(100, self.hunger + dt*100/(self.manager.minutes*60)*(.12 if self.state == 'sleep' else 1))
-        self.setToolTip(f'{self.appearance.description}\nГолод {self.hunger:.0f}% · Энергия {self.energy:.0f}%\nПеретащите мышью · ПКМ — меню')
+        self.refresh_tooltip()
         if self.drag is not None:
             self.update()
             return
@@ -322,7 +350,9 @@ class Pup(QWidget):
                 self.start_sitting(now)
         elif self.state == 'poop':
             if now >= self.deadline:
-                self.manager.droppings.append(Dropping(round(self.xf+35), round(self.yf+98)))
+                center = self.xf+rear_drop_offset(self.appearance,self.direction)
+                self.manager.droppings.append(Dropping(round(center-15),round(self.yf+98),
+                    getattr(self.manager,'dropping_minutes',DEFAULT_DROPPING_MINUTES)))
                 self.state, self.digest_at = 'walk', None
                 self.deadline = now+8
         elif self.state == 'zoomies':
@@ -437,6 +467,8 @@ class Manager:
         self.app = app
         self.pups, self.surfaces, self.droppings = [], [], []
         self.minutes = 10
+        self.dropping_minutes = DEFAULT_DROPPING_MINUTES
+        self.show_names = True
         saved = {}
         try:
             saved = json.loads((DATA/'state.json').read_text(encoding='utf-8'))
@@ -446,6 +478,8 @@ class Manager:
         except (OSError, ValueError, TypeError, AttributeError):
             saved = {}
             pass
+        self.dropping_minutes = setting_int(saved.get('dropping_minutes'),DEFAULT_DROPPING_MINUTES,1,1440)
+        self.show_names = saved.get('show_names',True) is not False
         pix = QPixmap(64,64)
         pix.fill(Qt.transparent)
         painter = QPainter(pix)
@@ -527,12 +561,36 @@ class Manager:
         interval.setValue(self.minutes)
         interval.setSuffix(' мин')
         form.addRow('От сытости до полного голода:',interval)
+        cleanup = QSpinBox()
+        cleanup.setRange(1,1440)
+        cleanup.setValue(self.dropping_minutes)
+        cleanup.setSuffix(' мин')
+        cleanup.setToolTip('180 минут = 3 часа. Отсчёт идёт от появления каждой какахи.')
+        form.addRow('Удалять какахи через:',cleanup)
+        names_visible = QCheckBox('Показывать имя при наведении')
+        names_visible.setChecked(self.show_names)
+        form.addRow(names_visible)
+        name_fields = []
+        for i,pup in enumerate(self.pups):
+            field = QLineEdit(pup.name)
+            field.setMaxLength(40)
+            form.addRow(f'Имя таксы {i+1} ({COATS[pup.appearance.coat]}):',field)
+            name_fields.append((pup,field))
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(d.accept)
         buttons.rejected.connect(d.reject)
         form.addRow(buttons)
         if d.exec():
             self.minutes = interval.value()
+            self.dropping_minutes = cleanup.value()
+            self.show_names = names_visible.isChecked()
+            for i,(pup,field) in enumerate(name_fields):
+                pup.name = field.text().strip() or f'Такса {i+1}'
+                pup.refresh_tooltip()
+            from shiboken6 import isValid
+            for dropping in self.droppings:
+                if isValid(dropping):
+                    dropping.set_lifetime(self.dropping_minutes)
             self.save()
     def appearance_dialog(self,pup):
         d = QDialog()
@@ -558,7 +616,8 @@ class Manager:
     def save(self):
         try:
             DATA.mkdir(parents=True,exist_ok=True)
-            (DATA/'state.tmp').write_text(json.dumps({'minutes':self.minutes,'pups':[p.serialize() for p in self.pups]}),encoding='utf-8')
+            (DATA/'state.tmp').write_text(json.dumps({'minutes':self.minutes,'dropping_minutes':self.dropping_minutes,
+                'show_names':self.show_names,'pups':[p.serialize() for p in self.pups]}),encoding='utf-8')
             (DATA/'state.tmp').replace(DATA/'state.json')
         except OSError:
             pass

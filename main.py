@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (QApplication, QWidget, QMenu, QSystemTrayIcon,
 from artwork import draw_bed, draw_dog, rear_drop_offset, WALK_SPEED, RUN_SPEED
 from appearance import Appearance, STYLES, COATS, FURS
 from dragging import Suspension, draw_hanging
-from dragon_art import flame as draw_flame, village as draw_village
+from dragon_art import flame as draw_flame, village as draw_village, dragon_dropping
 
 DATA = Path(os.environ.get('LOCALAPPDATA', str(Path.home()))) / 'Drakarium'
 SLEEP_SECONDS = 20 * 60
@@ -199,10 +199,7 @@ class Dropping(QWidget):
     def paintEvent(self, event):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
-        p.setPen(Qt.NoPen)
-        p.setBrush(QColor('#70472f'))
-        for x, y, w, h in [(3,18,24,9),(7,12,17,10),(11,6,10,11)]:
-            p.drawEllipse(x,y,w,h)
+        dragon_dropping(p)
 
 
 class Pup(QWidget):

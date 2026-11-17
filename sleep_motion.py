@@ -31,8 +31,6 @@ def draw_back_sleep(p, artist, elapsed):
     if dragon:
         artist.fill(path([(50,57),(38,48,42,42,57,50),
                           (70,43,86,44,100,54),(79,52,63,57,50,57)]),40,tone=artist.membrane)
-    artist.fill(path([(50,67),(37,65,30,55,39,51),
-                      (47,48,58,58,64,63),(62,70,55,72,50,67)]),10,tone=artist.shade)
     body=path([(43,79),(35,61,51,47,73,48),
                (94,45,111,54,117,69),(124,88,105,99,81,98),
                (58,100,41,92,43,79)])
@@ -41,6 +39,14 @@ def draw_back_sleep(p, artist, elapsed):
                 (116,77,105,92,86,94),(67,97,49,85,58,66)])
     belly_color=artist.light if not dragon else artist.horn
     artist.fill(belly,41,tone=QColor(belly_color).lighter(114).name(),patterned=False,outline=False)
+    # Far hind leg is visible over the upper rump, with its own inward foot.
+    artist.fill(path([(49,62),(40,60,39,51,47,51),
+                      (55,51,55,59,61,60),(68,61,68,67,63,69),
+                      (57,71,53,64,49,62)]),10,tone=artist.shade)
+    artist.fill(path([(59,60),(65,59,69,63,66,67),
+                      (64,70,58,69,56,66),(54,63,56,60,59,60)]),44,
+                tone=getattr(artist,'tan',artist.light) if artist.look.coat else artist.light,
+                patterned=False)
     # Tail wraps the rump without cutting a hole through the belly.
     artist.fill(path([(46,81),(32,82,34,103,64,99),
                       (77,99,83,95,87,92),(64,99,43,94,46,81)]),5,tone=artist.shade)
@@ -80,6 +86,10 @@ def draw_back_sleep(p, artist, elapsed):
 
 def draw_sleeping(p, artist, elapsed):
     amount=sleep_roll(elapsed)
+    p.save()
+    # Preserve a lean abdomen for ordinary pets; excess satiety rounds it out.
+    fat=max(0,min(1,artist.chubby))
+    p.translate(80,98);p.scale(1+.035*fat,.84+.16*fat);p.translate(-80,-98)
     if amount<1:
         p.save();p.setOpacity(p.opacity()*(1-amount));artist.curled();p.restore()
     if amount>0:
@@ -88,3 +98,4 @@ def draw_sleeping(p, artist, elapsed):
         p.translate(math.sin(amount*math.pi)*2,0)
         draw_back_sleep(p,artist,elapsed)
         p.restore()
+    p.restore()

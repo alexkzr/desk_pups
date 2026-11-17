@@ -276,3 +276,21 @@ def village(p,phase,progress=0,direction=1,coat=0,burn_age=0):
         stroke(p,((x+1,81),(x-1+stride,84)),'#342d27',.8)
         stroke(p,((x+1,81),(x+3-stride,84)),'#342d27',.8)
     p.restore()
+
+
+def dragon_dropping(p):
+    """Small gold coin fragments embedded in the pile, not floating around it."""
+    from artwork import path
+    p.save();p.setPen(Qt.NoPen)
+    pile=QPainterPath()
+    for x,y,w,h in ((3,18,24,9),(7,12,17,10),(11,6,10,11)):
+        q=QPainterPath();q.addEllipse(QRectF(x,y,w,h));pile=pile.united(q)
+    p.setBrush(QColor('#70472f'));p.drawPath(pile)
+    p.setClipPath(pile,Qt.IntersectClip)
+    for x,y,angle in ((14,10,-22),(20,16,30),(8,22,-12),(16,23,18),(23,23,-40)):
+        p.save();p.translate(x,y);p.rotate(angle)
+        shard=path([(-2,-1),(-1,-2,2,-2,3,0),(1,2),(-2,1)])
+        p.setPen(QPen(QColor('#a27119'),.55));p.setBrush(QColor('#e6b84b'));p.drawPath(shard)
+        p.setPen(QPen(QColor('#fff0a3'),.6));p.drawLine(QPointF(-1,-1),QPointF(1.5,-.7))
+        p.restore()
+    p.restore()

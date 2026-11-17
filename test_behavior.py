@@ -41,6 +41,8 @@ class BehaviorTests(unittest.TestCase):
         self.pup.close()
         for w in self.manager.droppings:
             w.close()
+        for w in getattr(self.manager,'ground_fires',[]):
+            if isValid(w):w.close()
 
     def step(self, delta=.1):
         self.now += delta
@@ -1043,13 +1045,113 @@ class BehaviorTests(unittest.TestCase):
                 with patch('main.time.monotonic',return_value=self.now):
                     effect=FireBreath(self.pup)
                 try:
-                    expected_x=100+(mouth_x if direction>0 else 160-mouth_x-190)
+                    expected_x=100+(mouth_x if direction>0 else 160-mouth_x-240)
                     self.assertEqual(effect.x(),round(expected_x))
-                    self.assertEqual(effect.y(),round(200+mouth_y-35))
+                    self.assertEqual(effect.y(),round(200+mouth_y-70))
                 finally:effect.close()
         self.assertLess(heights[0],heights[1])
         self.assertLess(heights[1],heights[2])
         self.assertLess(abs(heights[2]-90),2)
+
+    def test_three_fire_styles_animate_in_all_colors_with_a_wide_footprint(self):
+        from fire_art import flame,FIRE_STYLES
+        self.assertEqual(len(FIRE_STYLES),3)
+        for coat in range(4):
+            hashes=set()
+            for style in range(3):
+                frames=[]
+                for phase in (.7,.9):
+                    im=QImage(240,140,QImage.Format_ARGB32_Premultiplied)
+                    im.fill(Qt.transparent);p=QPainter(im);p.translate(0,35)
+                    flame(p,phase,coat,210,style);p.end()
+                    frames.append(bytes(im.constBits()))
+                    height=sum(any(im.pixelColor(x,y).alpha()>100 for x in range(45,180)) for y in range(140))
+                    self.assertGreater(height,35)
+                self.assertNotEqual(*frames)
+                hashes.add(hashlib.sha256(frames[0]).hexdigest())
+            self.assertEqual(len(hashes),3)
+
+    def test_head_moves_up_and_down_in_both_fire_modes_with_shared_mouth_pose(self):
+        from dragon_art import breathing_pose,dragon_mouth
+        for state in ('fire','hunt_fire'):
+            a=breathing_pose(state,.3,1);b=breathing_pose(state,1.1,1)
+            self.assertGreater(abs(a[2]-b[2]),8)
+            self.assertGreater(abs(dragon_mouth(state,.3)[1]-dragon_mouth(state,1.1)[1]),5)
+        self.pup.breathe_fire(self.now)
+        self.assertAlmostEqual(self.pup.feeding_progress(self.now),0)
+        self.assertAlmostEqual(self.pup.feeding_progress(self.now+.3),1)
+        self.assertAlmostEqual(self.pup.feeding_progress(self.now+2.4),0)
+
+    def test_surface_fire_persists_after_breath_and_tracks_its_window(self):
+        from main import SurfaceFire,SURFACE_FIRE_SECONDS
+        a,b=self.flight_scene()
+        self.pup.anchor=a;self.pup.xf=float(a[1]+20);self.pup.yf=float(a[2]-98)
+        self.pup.state='fire';self.manager.fire_style=2
+        effect=self.pup.ignite_surface(145)
+        self.assertIsNotNone(effect)
+        self.assertEqual(effect.style,2)
+        self.assertLessEqual(effect.right,a[3])
+        created=effect.created
+        self.pup.clear_village();self.pup.state='walk'
+        self.assertTrue(effect.tick(created+3))
+        self.assertTrue(effect.isVisible())
+        x=effect.left
+        moved=(a[0],a[1]+40,a[2]+20,a[3]+40);self.manager.surfaces=[moved,b]
+        self.assertTrue(effect.tick(created+4))
+        self.assertAlmostEqual(effect.left,x+40)
+        self.assertEqual(effect.y()+70,moved[2])
+        self.assertFalse(effect.tick(created+SURFACE_FIRE_SECONDS))
+        self.assertFalse(effect.isVisible())
+
+    def test_surface_fire_disappears_when_support_closes_or_is_maximized(self):
+        a,b=self.flight_scene();self.pup.anchor=a;self.pup.xf=float(a[1]+20);self.pup.state='hunt_fire'
+        effect=self.pup.ignite_surface(142)
+        self.manager.surfaces=[b]
+        self.assertFalse(effect.tick(effect.created+1))
+        self.assertFalse(effect.isVisible())
+
+    def test_surface_fire_stays_inside_support_and_is_click_through(self):
+        a,b=self.flight_scene();self.pup.anchor=a;self.pup.state='fire'
+        self.pup.direction=1;self.pup.xf=float(a[3]-165)
+        self.assertIsNone(self.pup.ignite_surface(150))
+        self.pup.direction=-1;self.pup.xf=float(a[1]+180)
+        effect=self.pup.ignite_surface(150)
+        self.assertIsNotNone(effect)
+        self.assertGreaterEqual(effect.left,a[1])
+        self.assertLessEqual(effect.right,a[3])
+        self.assertTrue(effect.windowFlags() & Qt.WindowTransparentForInput)
+
+    def test_breath_ignites_the_surface_only_once_and_extinguish_cleans_it(self):
+        self.flight_scene();self.pup.direction=1
+        self.pup.breathe_fire(self.now)
+        for _ in range(30):self.pup.flame.advance()
+        self.assertEqual(len(self.manager.ground_fires),1)
+        effect=self.manager.ground_fires[0]
+        manager=Manager.__new__(Manager);manager.ground_fires=self.manager.ground_fires
+        manager.extinguish()
+        self.assertEqual(manager.ground_fires,[])
+        self.assertFalse(effect.isVisible())
+
+    def test_fire_style_setting_applies_only_on_accept_and_is_saved(self):
+        import tempfile,json
+        from pathlib import Path
+        manager=Manager.__new__(Manager)
+        manager.minutes=10;manager.dropping_minutes=180;manager.show_names=True
+        manager.fire_style=0;manager.pups=[self.pup];manager.droppings=[]
+        saved=[]
+        real_save=manager.save
+        manager.save=lambda:saved.append(manager.fire_style)
+        def edit(accept):
+            d=self.app.activeModalWidget();combo=d.findChild(QComboBox,'fireStyle')
+            self.assertEqual(combo.count(),3);combo.setCurrentIndex(2)
+            d.accept() if accept else d.reject()
+        QTimer.singleShot(0,lambda:edit(False));manager.settings()
+        self.assertEqual(manager.fire_style,0);self.assertEqual(saved,[])
+        QTimer.singleShot(0,lambda:edit(True));manager.settings()
+        self.assertEqual(manager.fire_style,2);self.assertEqual(saved,[2])
+        with tempfile.TemporaryDirectory() as directory:
+            with patch('main.DATA',Path(directory)):real_save()
+            self.assertEqual(json.loads((Path(directory)/'state.json').read_text(encoding='utf-8'))['fire_style'],2)
 
 
 if __name__ == '__main__':

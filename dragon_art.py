@@ -16,8 +16,17 @@ def feeding_pose(progress=1.,phase=0.,chewing=False):
     return (105-2*t,36+27*t+(math.sin(phase*9)*.8*t if chewing else 0),
             25*t+(math.sin(phase*8)*2*t if chewing else 0))
 
+def breathing_pose(state,phase=0.,progress=1.):
+    if state in ('hunt_fire','eat'):
+        x,y,tilt=feeding_pose(progress,phase,state=='eat')
+    else:x,y,tilt=105,36,0
+    if state in ('hunt_fire','fire'):
+        amount=max(0,min(1,progress));wave=math.sin(phase*3.8)*amount
+        y+=wave*2;tilt+=wave*7
+    return x,y,tilt
+
 def dragon_mouth(state,phase=0.,progress=1.):
-    x,y,tilt=feeding_pose(progress,phase,state=='eat') if state in ('hunt_fire','eat') else (105,36,0)
+    x,y,tilt=breathing_pose(state,phase,progress)
     a=math.radians(tilt)
     return (x+10+34*math.cos(a)-3*math.sin(a),
             y+10+34*math.sin(a)+3*math.cos(a))
@@ -160,8 +169,9 @@ class DragonArtist:
                    blend((101,43,104,39,112,39),(101,58,106,60,112,64)) if feeding else (101,43,104,39,112,39),
                    blend((126,40,130,55,125,68),(120,67,123,74,120,79)) if feeding else (126,40,130,55,125,68),
                    (120,82,111,88,101,90),(85,93,69,88,57,88),(49,88,44,82,47,74)])
-        if feeding:
-            hx,hy,tilt=feeding_pose(progress,self.phase,state=='eat')
+        articulated=feeding or state=='fire'
+        if articulated:
+            hx,hy,tilt=breathing_pose(state,self.phase,getattr(self,'feeding_progress',1.) if state=='fire' else progress)
             angle=math.radians(tilt)
             def joint(x,y):
                 return (hx+10+(x-10)*math.cos(angle)-(y-10)*math.sin(angle),
@@ -190,9 +200,9 @@ class DragonArtist:
         self.wing(94,65,flight,False,not flight)
         for x,y,height in ((49,60,7),(57,54,11),(65,55,12),(74,56,15),
                            (83,55,16),(92,52,14),(101,46,12),(109,40,9)):
-            if feeding and x>=101:continue
+            if articulated and x>=101:continue
             self.fill(path([(x-3,y+3),(x-4,y-height),(x+6,y+1)]),4,tone=self.horn)
-        if feeding:self.head(hx,hy,tilt,running=True)
+        if articulated:self.head(hx,hy,tilt,running=True)
         else:self.head(105,36+bob,-4 if flight else self.perch_tilt,running=state=='fire')
 
     def curled(self,unfold=0,show_head=True):
@@ -211,68 +221,7 @@ class DragonArtist:
         p.restore()
 
 
-def flame(p,phase,coat,width=190):
-    """Turbulent overlapping tongues with a hot core and dark burning tips."""
-    p.save();p.setPen(Qt.NoPen)
-    strength=min(1,max(0,phase*5),max(0,(2.4-phase)*4))
-    p.setOpacity(strength)
-    color=QColor(FIRE_COLORS[coat])
-    hot=QColor('#eafaff' if coat==3 else '#fff4bc')
-    for i in range(4):
-        length=(105+i*23)*(.91+.09*math.sin(phase*17+i*4))
-        tip=35+math.sin(phase*11+i*2.3)*(4+i*3)
-        w=3+i
-        q=QPainterPath(QPointF(0,35))
-        q.cubicTo(length*.20,33-w*.3,length*.42,tip-w,length*.65,tip-w*.55)
-        q.cubicTo(length*.78,tip-w*.9,length*.92,tip+w*.35,length,tip)
-        q.cubicTo(length*.86,tip+w*.85,length*.74,tip+w*1.4,length*.56,35+w*.6)
-        q.cubicTo(length*.27,35+w*.5,length*.10,37,0,35)
-        g=QLinearGradient(0,35,length,35)
-        g.setColorAt(0,hot);g.setColorAt(.13,color.lighter(170))
-        g.setColorAt(.45,color);g.setColorAt(.79,color.darker(140))
-        end=color.darker(220);end.setAlpha(160);g.setColorAt(.97,end)
-        end=QColor(end);end.setAlpha(0);g.setColorAt(1,end)
-        p.setBrush(g);p.drawPath(q)
-    # Advected curls break the outline into separate, rising, pointed flames.
-    # They are born at the mouth and fade at the tip instead of stretching a cone.
-    for layer in range(3):
-        for i in range(9):
-            u=(phase*.9+i/9+layer*.037)%1
-            x=14+u*(width-22)
-            y=35+math.sin(phase*7+i*2.8+layer)*(3+u*7)
-            r=(3+u*9)*(.85+.15*math.sin(phase*13+i))
-            height=r*(1.7+.5*math.sin(phase*9+i*3))
-            tip_x=x+math.sin(phase*12+i)*r*.7+r*.4
-            q=QPainterPath(QPointF(x-r,y+r*.5))
-            q.cubicTo(x-r*1.4,y-r*.5,x+r*.5,y-height*.4,tip_x,y-height)
-            q.cubicTo(x+r*.1,y-height*.2,x+r*1.4,y,x+r*.5,y+r*.7)
-            q.cubicTo(x,y+r,x-r,y+r*.8,x-r,y+r*.5)
-            c=color.lighter(int(150-55*u)) if u<.65 else color.darker(int(110+100*(u-.65)))
-            alpha=int(195*min(1,u/.1,(1-u)/.14))
-            c.setAlpha(max(0,alpha))
-            g=QLinearGradient(x,y+r*.5,tip_x,y-height)
-            g.setColorAt(0,c.lighter(150));g.setColorAt(.5,c)
-            edge=c.darker(160);edge.setAlpha(0);g.setColorAt(1,edge)
-            p.setBrush(g);p.drawPath(q)
-    # Narrow white-hot jets flicker independently inside the broad outer tongues.
-    for i in range(3):
-        length=55+12*i+9*math.sin(phase*21+i*3)
-        tip=35+math.sin(phase*16+i*2)*5
-        q=QPainterPath(QPointF(0,35))
-        q.cubicTo(20,30,35,tip-5,length,tip)
-        q.cubicTo(length*.7,tip+5,22,39,0,35)
-        g=QLinearGradient(0,35,length,tip)
-        g.setColorAt(0,QColor('#ffffff'));g.setColorAt(.35,hot)
-        translucent=QColor(color.lighter(140));translucent.setAlpha(30);g.setColorAt(1,translucent)
-        p.setBrush(g);p.drawPath(q)
-    for i in range(16):
-        t=(phase*1.6+i*.137)%1
-        x=width*(.2+t*.8)
-        y=max(3,min(67,35+math.sin(i*8+phase*5)*(7+t*18)+(i%3-1)*t*7))
-        spark=QColor(color.lighter(180));spark.setAlpha(int(230*(1-t)))
-        p.setPen(QPen(spark,1.1,Qt.SolidLine,Qt.RoundCap))
-        p.drawLine(QPointF(x,y),QPointF(x-3-t*3,y+math.sin(i+phase)))
-    p.restore()
+from fire_art import flame
 
 
 def roof_flames(p,x,base,phase,coat,intensity=1):

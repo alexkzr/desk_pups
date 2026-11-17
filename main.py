@@ -18,8 +18,9 @@ from PySide6.QtWidgets import (QApplication, QWidget, QMenu, QSystemTrayIcon,
     QDialog, QFormLayout, QSpinBox, QComboBox, QCheckBox, QLineEdit, QDialogButtonBox, QMessageBox)
 from artwork import draw_bed, draw_dog, rear_drop_offset, WALK_SPEED, RUN_SPEED
 from appearance import Appearance, STYLES, COATS, FURS
+from fire_art import FIRE_STYLES, surface_flames
 from dragging import Suspension, draw_hanging
-from dragon_art import flame as draw_flame, village as draw_village, dragon_dropping, dragon_mouth
+from dragon_art import flame as draw_flame, village as draw_village, dragon_dropping, dragon_mouth, breathing_pose
 
 DATA = Path(os.environ.get('LOCALAPPDATA', str(Path.home()))) / 'Drakarium'
 SLEEP_SECONDS = 20 * 60
@@ -49,17 +50,23 @@ class Village(QWidget):
 class FireBreath(QWidget):
     def __init__(self,owner):
         super().__init__(None,Qt.Tool|Qt.FramelessWindowHint|Qt.WindowStaysOnTopHint|Qt.WindowDoesNotAcceptFocus|Qt.WindowTransparentForInput)
-        self.owner=owner;self.phase=0.
-        self.setAttribute(Qt.WA_TranslucentBackground);self.setFixedSize(190,70)
+        self.owner=owner;self.phase=0.;self.ignited=False
+        self.style=getattr(owner.manager,'fire_style',0)
+        self.setAttribute(Qt.WA_TranslucentBackground);self.setFixedSize(240,140)
         self.timer=QTimer(self);self.timer.timeout.connect(self.advance);self.timer.start(33)
         self.advance();self.show()
 
     def advance(self):
         self.phase+=.033
         pet=self.owner
-        mouth_x,mouth_y=dragon_mouth(pet.state,pet.phase,pet.feeding_progress())
-        x=pet.xf+(mouth_x if pet.direction>0 else 160-mouth_x-190)
-        self.move(round(x),round(pet.yf+pet.flight_offset+mouth_y-35))
+        progress=pet.feeding_progress()
+        mouth_x,mouth_y=dragon_mouth(pet.state,pet.phase,progress)
+        self.angle=math.sin(pet.phase*3.8)*7*progress
+        x=pet.xf+(mouth_x if pet.direction>0 else 160-mouth_x-240)
+        self.move(round(x),round(pet.yf+pet.flight_offset+mouth_y-70))
+        if self.phase>=.28 and not self.ignited:
+            self.owner.ignite_surface(mouth_x,self.style)
+            self.ignited=True
         self.update()
         if self.phase>=2.4:self.close()
 
@@ -68,8 +75,57 @@ class FireBreath(QWidget):
 
     def paintEvent(self,event):
         p=QPainter(self);p.setRenderHint(QPainter.Antialiasing)
-        if self.owner.direction<0:p.translate(190,0);p.scale(-1,1)
-        draw_flame(p,self.phase,self.owner.appearance.coat)
+        if self.owner.direction<0:p.translate(240,0);p.scale(-1,1)
+        if self.style==2:p.setRenderHint(QPainter.Antialiasing,False)
+        p.translate(0,70);p.rotate(self.angle);p.translate(0,-35)
+        draw_flame(p,self.phase,self.owner.appearance.coat,210,self.style)
+
+
+SURFACE_FIRE_SECONDS=14.
+
+class SurfaceFire(QWidget):
+    def __init__(self,manager,left,right,floor,coat,style,support=None,now=None):
+        super().__init__(None,Qt.Tool|Qt.FramelessWindowHint|Qt.WindowStaysOnTopHint|Qt.WindowDoesNotAcceptFocus|Qt.WindowTransparentForInput)
+        self.setAttribute(Qt.WA_TranslucentBackground);self.setAttribute(Qt.WA_DeleteOnClose)
+        self.manager,self.left,self.right,self.floor=manager,float(left),float(right),float(floor)
+        self.coat,self.style,self.support=coat,style,support
+        self.created=time.monotonic() if now is None else now
+        self.age=0.;self.opacity=0.
+        screen=QApplication.screenAt(QPoint(round((left+right)/2),round(floor-2))) or QApplication.primaryScreen()
+        self.screen_name=screen.name();self.screen_left=screen.availableGeometry().left()
+        self.setFixedSize(max(1,round(right-left)),76)
+        self.move(round(left),round(floor-70));self.show()
+
+    def tick(self,now):
+        self.age=max(0,now-self.created)
+        if self.age>=SURFACE_FIRE_SECONDS:
+            self.close();return False
+        if self.support:
+            matches=[v for v in self.manager.surfaces if v[0]==self.support[0]]
+            if not matches:
+                self.close();return False
+            v=min(matches,key=lambda v:abs(v[1]-self.support[1]))
+            shift=v[1]-self.support[1]
+            left=max(v[1],self.left+shift);right=min(v[3],self.right+shift)
+            if right-left<10:
+                self.close();return False
+            self.left,self.right,self.floor,self.support=left,right,v[2],v
+        else:
+            screen=next((s for s in QApplication.screens() if s.name()==self.screen_name),None)
+            if not screen:self.close();return False
+            r=screen.availableGeometry();shift=r.left()-self.screen_left
+            self.left=max(r.left(),self.left+shift);self.right=min(r.right()+1,self.right+shift)
+            self.screen_left=r.left();self.floor=r.bottom()+1
+            if self.right-self.left<10:self.close();return False
+        self.opacity=min(1,self.age/.35,(SURFACE_FIRE_SECONDS-self.age)/3)
+        self.setFixedSize(max(1,round(self.right-self.left)),76)
+        self.move(round(self.left),round(self.floor-70));self.update()
+        return True
+
+    def paintEvent(self,event):
+        p=QPainter(self);p.setRenderHint(QPainter.Antialiasing)
+        p.translate(0,70)
+        surface_flames(p,self.width(),self.age,self.coat,self.style,self.opacity)
 
 
 def setting_int(value, default, minimum, maximum):
@@ -314,7 +370,29 @@ class Pup(QWidget):
 
     def feeding_progress(self,now=None):
         now=time.monotonic() if now is None else now
-        return max(0,min(1,(now-(self.deadline-2.5))/.4)) if self.state=='hunt_fire' else 1.
+        if self.state=='hunt_fire':return max(0,min(1,(now-(self.deadline-2.5))/.4))
+        if self.state=='fire':return max(0,min(1,(now-(self.deadline-2.4))/.25,(self.deadline-now)/.25))
+        return 1.
+
+    def ignite_surface(self,mouth_x,style=None):
+        if self.state not in ('fire','hunt_fire'):return None
+        if self.anchor:
+            support=self.anchor;_,left,floor,right=support
+        else:
+            support=None;left,floor,right=self.ground()
+        start=self.xf+(mouth_x if self.direction>0 else 160-mouth_x)
+        ends=sorted((start+self.direction*20,start+self.direction*205))
+        a,b=max(left,ends[0]),min(right,ends[1])
+        if b-a<12:return None
+        manager=self.manager
+        if not hasattr(manager,'ground_fires'):manager.ground_fires=[]
+        if len(manager.ground_fires)>=24:
+            old=manager.ground_fires.pop(0)
+            from shiboken6 import isValid
+            if isValid(old):old.close()
+        fire=SurfaceFire(manager,a,b,floor,self.appearance.coat,getattr(manager,'fire_style',0) if style is None else style,support)
+        manager.ground_fires.append(fire)
+        return fire
 
     def can_breathe_fire(self):
         return self.drag is None and self.state in ('walk','sit','lie') and not self.overfeed and not (self.flame and self.flame.isVisible())
@@ -901,6 +979,8 @@ class Manager:
     def __init__(self, app):
         self.app = app
         self.pups, self.surfaces, self.droppings = [], [], []
+        self.ground_fires=[]
+        self.fire_style=0
         self.minutes = 10
         self.dropping_minutes = DEFAULT_DROPPING_MINUTES
         self.show_names = True
@@ -915,6 +995,7 @@ class Manager:
             pass
         self.dropping_minutes = setting_int(saved.get('dropping_minutes'),DEFAULT_DROPPING_MINUTES,1,1440)
         self.show_names = saved.get('show_names',True) is not False
+        self.fire_style=setting_int(saved.get('fire_style'),0,0,len(FIRE_STYLES)-1)
         pix = QPixmap(64,64)
         pix.fill(Qt.transparent)
         painter = QPainter(pix)
@@ -943,6 +1024,7 @@ class Manager:
         self.autosave.timeout.connect(self.save)
         self.autosave.start(30000)
         app.aboutToQuit.connect(self.save)
+        app.aboutToQuit.connect(self.extinguish)
         self.scan_windows()
     def add(self, saved=None):
         if len(self.pups)<10:
@@ -955,6 +1037,7 @@ class Manager:
             pup.tick(now)
         from shiboken6 import isValid
         self.droppings = [w for w in self.droppings if isValid(w)]
+        self.ground_fires=[w for w in self.ground_fires if isValid(w) and w.tick(now)]
     def menu(self, pup=None):
         m = QMenu()
         m.addAction('Дракарий • настольные драконы').setEnabled(False)
@@ -993,6 +1076,7 @@ class Manager:
             zoom = m.addAction('Устроить zoomies!',lambda:pup.start_zoomies())
             zoom.setEnabled(pup.can_zoom())
         m.addAction('Убрать за драконами',self.clean)
+        m.addAction('Потушить огонь на поверхностях',self.extinguish)
         m.addAction('Настройки…',self.settings)
         if pup and len(self.pups)>1:
             m.addAction('Убрать этого дракона',lambda:self.remove(pup))
@@ -1005,6 +1089,12 @@ class Manager:
     def remove(self,pup):
         self.pups.remove(pup)
         pup.close()
+    def extinguish(self):
+        from shiboken6 import isValid
+        for effect in getattr(self,'ground_fires',[]):
+            if isValid(effect):effect.close()
+        self.ground_fires=[]
+
     def clean(self):
         for w in self.droppings:
             try:
@@ -1027,6 +1117,11 @@ class Manager:
         cleanup.setSuffix(' мин')
         cleanup.setToolTip('180 минут = 3 часа. Отсчёт идёт от появления каждой какахи.')
         form.addRow('Удалять какахи через:',cleanup)
+        fire_style=QComboBox()
+        fire_style.setObjectName('fireStyle')
+        fire_style.addItems(FIRE_STYLES)
+        fire_style.setCurrentIndex(getattr(self,'fire_style',0))
+        form.addRow('Вид драконьего огня:',fire_style)
         names_visible = QCheckBox('Показывать имя при наведении')
         names_visible.setChecked(self.show_names)
         form.addRow(names_visible)
@@ -1044,6 +1139,7 @@ class Manager:
             self.minutes = interval.value()
             self.dropping_minutes = cleanup.value()
             self.show_names = names_visible.isChecked()
+            self.fire_style=fire_style.currentIndex()
             for i,(pup,field) in enumerate(name_fields):
                 pup.name = field.text().strip() or f'Дракон {i+1}'
                 pup.refresh_tooltip()
@@ -1084,7 +1180,7 @@ class Manager:
         try:
             DATA.mkdir(parents=True,exist_ok=True)
             (DATA/'state.tmp').write_text(json.dumps({'minutes':self.minutes,'dropping_minutes':self.dropping_minutes,
-                'show_names':self.show_names,'pups':[p.serialize() for p in self.pups]}),encoding='utf-8')
+                'show_names':self.show_names,'fire_style':getattr(self,'fire_style',0),'pups':[p.serialize() for p in self.pups]}),encoding='utf-8')
             (DATA/'state.tmp').replace(DATA/'state.json')
         except OSError:
             pass
@@ -1132,6 +1228,17 @@ def main():
             pet.start_sleep()
             pet.deadline=time.monotonic()
         QTimer.singleShot(11000,recover)
+        def smoke_fire_style(style,index):
+            manager.fire_style=style
+            dragon=manager.pups[index]
+            dragon.clear_village();dragon.clear_bed();dragon.anchor=None
+            r=app.primaryScreen().availableGeometry()
+            dragon.xf=float(r.left()+20);dragon.yf=float(r.bottom()+1-98)
+            dragon.direction=1;dragon.state='walk';dragon.overfeed=0
+            assert dragon.breathe_fire()
+            assert dragon.flame.style==style
+        QTimer.singleShot(5500,lambda:smoke_fire_style(1,3))
+        QTimer.singleShot(8000,lambda:smoke_fire_style(2,2))
         def smoke_flight():
             manager.scan.stop()
             r=app.primaryScreen().availableGeometry()
@@ -1146,6 +1253,8 @@ def main():
             flyer=manager.pups[2]
             if not flyer.anchor or flyer.anchor[0]!=90001:
                 app.exit(2)
+            if not any(f.style==2 for f in manager.ground_fires):
+                app.exit(3)
         QTimer.singleShot(13000,smoke_flight)
         QTimer.singleShot(18500,smoke_flight_landed)
         QTimer.singleShot(19500,app.quit)

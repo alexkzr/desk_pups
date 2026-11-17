@@ -19,6 +19,9 @@ class Suspension:
     def __init__(self, grab, direction=1):
         self.grab=tuple(grab)
         self.direction=direction
+        u=grab[0] if direction>0 else 160-grab[0]
+        self.scruff=math.exp(-((u-108)/14)**2-((grab[1]-49)/18)**2)
+        self.limits=(1.45,1.05,1.05,.35+.95*self.scruff)
         self.rest=[(x if direction>0 else 160-x,y) for x,y in ((36.,75.),(74.,75.),(112.,75.),(130.,53.))]
         self.angles=[0.,0.,0.,0.]
         self.speeds=[0.,0.,0.,0.]
@@ -77,7 +80,8 @@ class Suspension:
         bones=self.bones(angles)
         gx,gy=self.raw(self.grab,bones=bones)
         energy=0.
-        for x,y,mass in ((42,78,.3),(78,78,.4),(111,70,.2),(130,52,.1)):
+        for x,y,rear_mass,front_mass in ((42,78,.3,.2),(78,78,.4,.25),(111,70,.2,.3),(130,52,.1,.25)):
+            mass=rear_mass+(front_mass-rear_mass)*self.scruff
             point=(x if self.direction>0 else 160-x,y)
             px,py=self.raw(point,bones=bones)
             energy-=mass*((px-gx)*gravity[0]+(py-gy)*gravity[1])
@@ -98,11 +102,15 @@ class Suspension:
         count=max(1,math.ceil(dt*180))
         h=dt/count
         for _ in range(count):
-            for i,(inertia,damping,stiffness,limit) in enumerate(((1900,5,0,1.45),(650,8,12,1.05),(650,8,12,1.05),(420,10,55,.35))):
+            settings=((1900,5,12*self.scruff,self.limits[0]),(650,8,12,self.limits[1]),
+                      (650,8,12,self.limits[2]),(420,10,55,self.limits[3]))
+            for i,(inertia,damping,stiffness,limit) in enumerate(settings):
                 a=self.angles.copy();b=self.angles.copy()
                 a[i]+=.001;b[i]-=.001
                 torque=-(self.potential(a,gravity)-self.potential(b,gravity))/.002
-                acceleration=torque/inertia-damping*self.speeds[i]-stiffness*self.angles[i]
+                rest=(.10*self.scruff*self.direction if i==0 else
+                      1.05*self.scruff*self.direction if i==3 else 0.)
+                acceleration=torque/inertia-damping*self.speeds[i]-stiffness*(self.angles[i]-rest)
                 self.speeds[i]=max(-6,min(6,self.speeds[i]+acceleration*h))
                 self.angles[i]+=self.speeds[i]*h
                 if abs(self.angles[i])>limit:

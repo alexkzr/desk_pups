@@ -206,7 +206,7 @@ class Pup(QWidget):
         rig=self.suspension or self.release_rig
         angles=tuple(b[2]*self.direction*factor for b in rig.bones()) if rig else None
         draw_dog(p,state,self.phase,self.animated_sit_pose(time.monotonic()),0,
-                 self.appearance,self.ear_angle,angles)
+                 self.appearance,self.ear_angle,angles,(rig.scruff*factor if rig else 0.))
         p.end()
         return image
 
@@ -756,7 +756,7 @@ def main():
         QTimer.singleShot(600,lambda:[p.wake() for p in manager.pups])
         pet=manager.pups[0]
         def smoke_grab():
-            offset=QPoint(139 if pet.direction>0 else 21,45)
+            offset=QPoint(108 if pet.direction>0 else 52,49)
             pet.press_offset=offset
             pet.begin_drag(QPoint(round(pet.xf),round(pet.yf))+offset)
         def smoke_move(dx,dy):

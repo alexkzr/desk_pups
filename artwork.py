@@ -87,9 +87,10 @@ def spots(seed, part):
 
 
 class Artist:
-    def __init__(self, p, appearance, phase, ear_angle, hang_angles=None):
+    def __init__(self, p, appearance, phase, ear_angle, hang_angles=None, guilty=0.):
         self.p, self.look, self.phase, self.ear_angle = p,appearance,phase,ear_angle
         self.hang_angles=hang_angles or (0.,0.,0.)
+        self.guilty=max(0,min(1,(guilty-.05)/.95))
         self.base, self.light, self.shade, self.tan, self.outline = (
             ('#b55b2d','#d47d41','#8a3e24','#e4a465','#67331f'),
             ('#292831','#4b4650','#171820','#ca803f','#14151c'),
@@ -219,12 +220,16 @@ class Artist:
         p.restore()
         eye_x = 21-front*3
         eye_y = 7
-        if self.look.coat:
+        if self.look.coat or self.guilty:
             # In profile the muzzle is the inner side of this visible brow.
             brow=path([(eye_x-2,eye_y-2),
-                       (eye_x-1,eye_y-4,eye_x+2,eye_y-6,eye_x+4,eye_y-5),
+                       (eye_x-1,eye_y-4,eye_x+2,eye_y-6-2*self.guilty,eye_x+4,eye_y-5-2*self.guilty),
                        (eye_x+5,eye_y-3,eye_x+1,eye_y-2,eye_x-2,eye_y-1)])
-            self.fill(brow,35,tone=self.tan,patterned=False,outline=False)
+            p.save()
+            if not self.look.coat:
+                p.setOpacity(p.opacity()*self.guilty)
+            self.fill(brow,35,tone=self.tan if self.look.coat else self.shade,patterned=False,outline=False)
+            p.restore()
         if sleeping:
             eyelid=QPainterPath(QPointF(eye_x-1,eye_y+3))
             eyelid.quadTo(eye_x+2,eye_y+5,eye_x+5,eye_y+2)
@@ -232,7 +237,12 @@ class Artist:
         else:
             eye_size = 5.4 if plush else (4.7 if self.look.style == 0 else 4)
             ellipse(p,eye_x,eye_y,eye_size,eye_size+1,'#241c1a')
-            ellipse(p,eye_x+1.2,eye_y+.8,1.4,1.8,'#fff5e2')
+            if self.guilty:
+                p.save();p.setOpacity(p.opacity()*self.guilty)
+                ellipse(p,eye_x+.3,eye_y+1,eye_size-.5,eye_size,'#f6e6d2')
+                ellipse(p,eye_x+.8,eye_y-.4*self.guilty,eye_size-1,eye_size-.2,'#241c1a')
+                p.restore()
+            ellipse(p,eye_x+1.2,eye_y+.8-1.2*self.guilty,1.4,1.8,'#fff5e2')
             if front > .5:
                 ellipse(p,12,8,2.8,4.1,'#241c1a')
                 if self.look.coat:
@@ -243,7 +253,7 @@ class Artist:
         self.fill(nose,32,tone='#35231f',patterned=False,outline=False)
         ellipse(p,44,8.7,2.8,1.2,'#8f7366')
         smile=QPainterPath(QPointF(29,22))
-        smile.quadTo(35,25,40,20)
+        smile.quadTo(35,25-3*self.guilty,40,20+2*self.guilty)
         self.detail(smile,'#64351f',.8)
         if running:
             mouth=path([(30,22),(34,24,38,22,40,20),
@@ -403,7 +413,7 @@ class Artist:
         p.restore()
 
 
-def draw_dog(p, state, phase, sit_pose=0, wake_progress=0, appearance=None, ear_angle=0, hang_angles=None):
+def draw_dog(p, state, phase, sit_pose=0, wake_progress=0, appearance=None, ear_angle=0, hang_angles=None, guilty=0.):
     p.save()
     p.setPen(Qt.NoPen)
     appearance = appearance or Appearance()
@@ -411,7 +421,7 @@ def draw_dog(p, state, phase, sit_pose=0, wake_progress=0, appearance=None, ear_
     p.translate(80,98)
     p.scale(sx,sy)
     p.translate(-80,-98)
-    artist=Artist(p,appearance,phase,ear_angle,hang_angles)
+    artist=Artist(p,appearance,phase,ear_angle,hang_angles,guilty)
     if state=='sit':
         artist.sitting(sit_pose)
     elif state=='sleep':

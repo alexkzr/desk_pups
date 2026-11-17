@@ -355,7 +355,7 @@ class BehaviorTests(unittest.TestCase):
                     rig.step(.08,((1 if i%2 else -1)*900,math.sin(i)*500))
                     self.assertEqual(rig.map(grab),rig.anchor)
                     self.assertTrue(all(math.isfinite(a) for a in rig.angles+rig.speeds))
-                    self.assertTrue(all(abs(a)<=limit+1e-8 for a,limit in zip(rig.angles,(1.45,1.05,1.05,.35))))
+                    self.assertTrue(all(abs(a)<=limit+1e-8 for a,limit in zip(rig.angles,rig.limits)))
                     bones=rig.bones()
                     for j in (0,2):
                         self.assertAlmostEqual(math.hypot(bones[j][0]-bones[1][0],bones[j][1]-bones[1][1]),38)
@@ -395,7 +395,8 @@ class BehaviorTests(unittest.TestCase):
         self.pup.end_drag()
         after=(self.pup.xf+rig.map((74,75))[0]+self.pup.release_origin[0],
                self.pup.yf+rig.map((74,75))[1]+self.pup.release_origin[1])
-        self.assertEqual(before,after)
+        for a,b in zip(before,after):
+            self.assertAlmostEqual(a,b,places=7)
         self.assertEqual(self.pup.state,'fall')
         self.assertIsNone(self.pup.anchor)
         self.now=self.pup.release_started+.4
@@ -470,6 +471,37 @@ class BehaviorTests(unittest.TestCase):
                 tx,ty=round(root[0]),round(root[1]+13)
                 self.assertTrue(any(out.pixelColor(tx+dx,ty+dy).alpha()
                                     for dx in (-1,0,1) for dy in (-1,0,1)))
+
+    def test_scruff_grab_droops_head_and_rump_with_forward_balance(self):
+        for direction in (1,-1):
+            def mirror(point):
+                return point if direction>0 else (160-point[0],point[1])
+            rig=Suspension(mirror((108,49)),direction)
+            for _ in range(150):rig.step(1/30,(200,200))
+            self.assertAlmostEqual(rig.scruff,1)
+            for end in ((40,78),(130,53),(149,49)):
+                self.assertGreater(rig.map(mirror(end))[1],rig.anchor[1]+15)
+            head_angle=rig.bones()[-1][2]*direction
+            self.assertGreater(head_angle,.6)
+            self.assertLess(abs(rig.angles[0]),.5)
+            self.assertGreater(rig.angles[3]*direction,.8)
+            self.assertEqual(rig.map(rig.grab),rig.anchor)
+
+    def test_scruff_expression_is_drawn_and_other_grabs_keep_usual_expression(self):
+        rig=Suspension((108,49))
+        self.assertGreater(rig.scruff,.99)
+        self.assertLess(Suspension((40,65)).scruff,.01)
+        self.assertLess(Suspension((139,45)).scruff,.01)
+        for coat in range(3):
+            images=[]
+            for guilty in (0,1,Suspension((139,45)).scruff):
+                image=QImage(160,112,QImage.Format_ARGB32_Premultiplied)
+                image.fill(Qt.transparent)
+                p=QPainter(image)
+                draw_dog(p,'hang_body',1,appearance=Appearance(0,coat,0,1),guilty=guilty)
+                p.end();images.append(image)
+            self.assertNotEqual(images[0],images[1])
+            self.assertEqual(images[0],images[2])
 
 
 if __name__ == '__main__':

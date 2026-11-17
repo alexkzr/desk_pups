@@ -16,9 +16,9 @@ from PySide6.QtCore import Qt, QTimer, QPoint
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QIcon, QPixmap, QFont, QImage
 from PySide6.QtWidgets import (QApplication, QWidget, QMenu, QSystemTrayIcon,
     QDialog, QFormLayout, QSpinBox, QComboBox, QCheckBox, QLineEdit, QDialogButtonBox, QMessageBox)
-from artwork import draw_bed, draw_dog, rear_drop_offset
+from artwork import draw_bed, draw_dog, rear_drop_offset, WALK_SPEED, RUN_SPEED
 from appearance import Appearance, STYLES, COATS, FURS
-from dragging import Suspension, draw_mesh
+from dragging import Suspension, draw_hanging
 
 DATA = Path(os.environ.get('LOCALAPPDATA', str(Path.home()))) / 'Takson'
 SLEEP_SECONDS = 20 * 60
@@ -195,7 +195,7 @@ class Pup(QWidget):
             self.bed.close()
             self.bed = None
 
-    def drag_image(self, state='hang', factor=1.):
+    def drag_image(self, state='hang_body', factor=1.):
         image=QImage(480,336,QImage.Format_ARGB32_Premultiplied)
         image.fill(Qt.transparent)
         p=QPainter(image)
@@ -401,7 +401,7 @@ class Pup(QWidget):
         elif self.state == 'wake':
             elapsed = now-self.wake_started
             if elapsed > .9:
-                self.xf += self.direction*38*dt
+                self.xf += self.direction*WALK_SPEED*dt
             if self.bed:
                 self.bed.opacity = max(0, min(1, (4.8-elapsed)/.8))
                 self.bed.update()
@@ -425,7 +425,7 @@ class Pup(QWidget):
                 self.deadline = now+8
         elif self.state == 'zoomies':
             self.energy = max(0,self.energy-dt*1.1)
-            self.xf += self.direction*210*dt
+            self.xf += self.direction*RUN_SPEED*dt
             if now >= self.deadline:
                 self.state,self.deadline = 'walk',now+8
         elif self.hunger >= 70:
@@ -446,7 +446,7 @@ class Pup(QWidget):
                 elif self.state == 'sit':
                     self.start_sitting(now)
             if self.state == 'walk':
-                self.xf += self.direction*38*dt
+                self.xf += self.direction*WALK_SPEED*dt
         if self.state == 'sit' and self.sit_transition is None and now >= self.next_sit_pose:
             self.sit_transition = now
         lower,upper = left-4,max(left-4,right-156)
@@ -523,7 +523,7 @@ class Pup(QWidget):
                 blend.setCompositionMode(QPainter.CompositionMode_SourceOver)
                 blend.setOpacity(t);blend.drawImage(0,0,self.drag_image())
                 blend.end()
-            draw_mesh(p,image,self.suspension.map)
+            draw_hanging(p,image,self.suspension,self.appearance,self.phase)
             return
         p.translate(*self.canvas_padding)
         landing=(time.monotonic()-self.landing_started)/.35
@@ -537,7 +537,8 @@ class Pup(QWidget):
                 x,y=self.release_rig.map(point)
                 x+=self.release_origin[0];y+=self.release_origin[1]
                 return x*(1-ease)+point[0]*ease,y*(1-ease)+point[1]*ease
-            draw_mesh(p,self.drag_image(factor=1-ease),mapping)
+            draw_hanging(p,self.drag_image(factor=1-ease),self.release_rig,
+                         self.appearance,self.phase,mapping,ease)
             return
         if self.state == 'sleep':
             p.setPen(QColor('#57758a'))

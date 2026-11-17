@@ -8,6 +8,20 @@ from PySide6.QtGui import QColor, QLinearGradient, QPainterPath, QPen
 
 from appearance import Appearance
 
+WALK_SPEED, RUN_SPEED = 38., 210.
+WALK_FREQUENCY, RUN_FREQUENCY = 8., 24.
+
+
+def foot_cycle(angle, running=False):
+    frequency = RUN_FREQUENCY if running else WALK_FREQUENCY
+    speed = RUN_SPEED if running else WALK_SPEED
+    amplitude = speed*math.pi/(2*frequency)
+    phase = angle % (2*math.pi)
+    if phase < math.pi:
+        return -amplitude*math.cos(phase), (6 if running else 2.5)*math.sin(phase)
+    # A planted paw moves backwards at precisely the body's forward speed.
+    return amplitude*(1-2*(phase-math.pi)/math.pi), 0.
+
 
 def model_scale(appearance):
     return ((1,1),(.94,1.10),(1,1),(1,.98))[appearance.style]
@@ -263,8 +277,8 @@ class Artist:
         run=state=='zoomies'
         eating=state=='eat'
         low=state in ('lie','stretch')
-        hanging=state=='hang'
-        gait=self.phase*(14 if run else 8)
+        hanging=state in ('hang','hang_body')
+        gait=self.phase*(RUN_FREQUENCY if run else WALK_FREQUENCY)
         bob=(-abs(math.sin(gait))*5 if run else math.sin(gait)*.7) if state in ('walk','zoomies') else 0
         p.save()
         if eating:
@@ -278,9 +292,11 @@ class Artist:
         self.tail(28,72+bob if not low else 86,run,low)
         p.restore()
         for index,x in enumerate((43,108)):
+            if state=='hang_body':
+                continue
             angle=gait+(index*.6 if run else index*math.pi)+math.pi
-            foot=x+math.cos(angle)*(10 if run else 4) if state in ('walk','zoomies') else x
-            lift=max(0,math.sin(angle))*(6 if run else 2) if state in ('walk','zoomies') else 0
+            dx,lift=foot_cycle(angle,run) if state in ('walk','zoomies') else (0,0)
+            foot=x+dx
             if hanging:
                 p.save();p.translate(x,root)
                 p.rotate(-math.degrees(self.hang_angles[0 if index==0 else 2])+math.sin(self.phase*6+index)*5)
@@ -303,9 +319,11 @@ class Artist:
                     (110,top+11,112,top-5,112,top-neck+5)])
         self.body(body,chest)
         for index,x in enumerate((36,111)):
+            if state=='hang_body':
+                continue
             angle=gait+(index*.6 if run else index*math.pi)
-            foot=x+math.cos(angle)*(10 if run else 4) if state in ('walk','zoomies') else x
-            lift=max(0,math.sin(angle))*(6 if run else 2) if state in ('walk','zoomies') else 0
+            dx,lift=foot_cycle(angle,run) if state in ('walk','zoomies') else (0,0)
+            foot=x+dx
             if hanging:
                 p.save();p.translate(x,root)
                 p.rotate(-math.degrees(self.hang_angles[0 if index==0 else 2])+math.sin(self.phase*6+index+1)*6)

@@ -12,9 +12,9 @@ from PySide6.QtCore import Qt, QPointF, QTimer
 from PySide6.QtWidgets import QApplication, QSpinBox, QLineEdit, QCheckBox
 from PySide6.QtGui import QImage, QPainter
 from main import Pup, Manager, Dropping, SLEEP_SECONDS
-from artwork import draw_dog
+from artwork import draw_dog, foot_cycle, WALK_SPEED, RUN_SPEED, WALK_FREQUENCY, RUN_FREQUENCY, model_scale
 from shiboken6 import isValid
-from dragging import Suspension, draw_mesh
+from dragging import Suspension, draw_mesh, draw_hanging
 from appearance import Appearance
 
 
@@ -348,14 +348,14 @@ class BehaviorTests(unittest.TestCase):
 
     def test_hanging_cursor_pin_lengths_and_joint_limits_under_sharp_moves(self):
         for direction in (1,-1):
-            for point in ((40,65),(78,65),(111,57),(139,45)):
+            for point in ((40,65),(78,65),(108,49),(139,45)):
                 grab=point if direction>0 else (160-point[0],point[1])
                 rig=Suspension(grab,direction)
                 for i in range(45):
                     rig.step(.08,((1 if i%2 else -1)*900,math.sin(i)*500))
                     self.assertEqual(rig.map(grab),rig.anchor)
                     self.assertTrue(all(math.isfinite(a) for a in rig.angles+rig.speeds))
-                    self.assertTrue(all(abs(a)<=limit+1e-8 for a,limit in zip(rig.angles,(1.45,.42,.42,.28))))
+                    self.assertTrue(all(abs(a)<=limit+1e-8 for a,limit in zip(rig.angles,(1.45,1.05,1.05,.35))))
                     bones=rig.bones()
                     for j in (0,2):
                         self.assertAlmostEqual(math.hypot(bones[j][0]-bones[1][0],bones[j][1]-bones[1][1]),38)
@@ -366,7 +366,7 @@ class BehaviorTests(unittest.TestCase):
             for _ in range(90):
                 rig.step(1/30,(200,200))
             self.assertGreater(rig.map(target)[1],rig.anchor[1]+35)
-            self.assertLess(abs(rig.angles[3]),.28)
+            self.assertLess(abs(rig.angles[3]),.35)
 
     def test_hanging_swing_damps_after_mouse_stops(self):
         rig=Suspension((78,65))
@@ -416,12 +416,60 @@ class BehaviorTests(unittest.TestCase):
                     image.fill(Qt.transparent)
                     p=QPainter(image)
                     p.translate(160,0);p.scale(-1,1)
-                    draw_dog(p,'hang',1,appearance=Appearance(style,coat,fur,13),hang_angles=(.4,.6,.8,.9))
+                    look=Appearance(style,coat,fur,13)
+                    draw_dog(p,'hang_body',1,appearance=look,hang_angles=(.4,.6,.8,.9))
                     p.end()
                     output=QImage(320,320,QImage.Format_ARGB32_Premultiplied)
                     output.fill(Qt.transparent)
-                    p=QPainter(output);draw_mesh(p,image,rig.map);p.end()
+                    rig.elapsed=1
+                    p=QPainter(output);draw_hanging(p,image,rig,look,1);p.end()
                     self.assertTrue(any(output.pixelColor(x,150).alpha() for x in range(320)))
+
+    def test_planted_feet_stay_fixed_on_ground_during_walk_and_run(self):
+        for running in (False,True):
+            speed=RUN_SPEED if running else WALK_SPEED
+            frequency=RUN_FREQUENCY if running else WALK_FREQUENCY
+            for direction in (1,-1):
+                world_positions=[]
+                for i in range(21):
+                    angle=math.pi+math.pi*i/20
+                    t=angle/frequency
+                    dx,lift=foot_cycle(angle,running)
+                    self.assertAlmostEqual(lift,0)
+                    world_positions.append(direction*(speed*t+dx))
+                self.assertLess(max(world_positions)-min(world_positions),1e-8)
+                a,h1=foot_cycle(math.pi*.2,running)
+                b,h2=foot_cycle(math.pi*.8,running)
+                self.assertGreater(b,a)
+                self.assertGreater(min(h1,h2),0)
+
+    def test_back_grab_sags_both_rump_and_head_in_both_directions(self):
+        for direction in (1,-1):
+            def mirror(point):
+                return point if direction>0 else (160-point[0],point[1])
+            rig=Suspension(mirror((78,65)),direction)
+            for _ in range(150):rig.step(1/30,(200,200))
+            for end in ((40,78),(130,53)):
+                self.assertGreater(rig.map(mirror(end))[1],rig.anchor[1]+25)
+            self.assertLess(rig.angles[1]*direction,-.4)
+            self.assertGreater(rig.angles[2]*direction,.4)
+
+    def test_paws_are_painted_below_attachment_even_when_torso_is_vertical(self):
+        for direction in (1,-1):
+            rig=Suspension((78,65),direction)
+            rig.angles=[1.1,-.8,.8,.2]
+            rig.elapsed=1
+            look=Appearance(0,1,1,13)
+            blank=QImage(160,112,QImage.Format_ARGB32_Premultiplied)
+            blank.fill(Qt.transparent)
+            out=QImage(320,320,QImage.Format_ARGB32_Premultiplied)
+            out.fill(Qt.transparent)
+            p=QPainter(out);draw_hanging(p,blank,rig,look,1);p.end()
+            for x in (43,108,36,111):
+                root=rig.map((x if direction>0 else 160-x,82))
+                tx,ty=round(root[0]),round(root[1]+13)
+                self.assertTrue(any(out.pixelColor(tx+dx,ty+dy).alpha()
+                                    for dx in (-1,0,1) for dy in (-1,0,1)))
 
 
 if __name__ == '__main__':

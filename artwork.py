@@ -87,7 +87,7 @@ def spots(seed, part):
 
 
 class Artist:
-    def __init__(self, p, appearance, phase, ear_angle, hang_angles=None, guilty=0., chubby=0.):
+    def __init__(self, p, appearance, phase, ear_angle, hang_angles=None, guilty=0., chubby=0., sleep_elapsed=0.):
         self.p, self.look, self.phase, self.ear_angle = p,appearance,phase,ear_angle
         self.hang_angles=hang_angles or (0.,0.,0.)
         self.ear_rest_angle=0.
@@ -418,7 +418,7 @@ class Artist:
         p.restore()
 
 
-def draw_dog(p, state, phase, sit_pose=0, wake_progress=0, appearance=None, ear_angle=0, hang_angles=None, guilty=0., chubby=0.):
+def draw_dog(p, state, phase, sit_pose=0, wake_progress=0, appearance=None, ear_angle=0, hang_angles=None, guilty=0., chubby=0., sleep_elapsed=0.):
     p.save()
     p.setPen(Qt.NoPen)
     appearance = appearance or Appearance()
@@ -430,7 +430,8 @@ def draw_dog(p, state, phase, sit_pose=0, wake_progress=0, appearance=None, ear_
     if state=='sit':
         artist.sitting(sit_pose)
     elif state=='sleep':
-        artist.curled()
+        from sleep_motion import draw_sleeping
+        draw_sleeping(p,artist,sleep_elapsed)
     elif state=='wake':
         t=min(1,max(0,wake_progress/.9))
         artist.curled(t*t*(3-2*t))

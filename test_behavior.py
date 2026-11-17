@@ -651,6 +651,26 @@ class BehaviorTests(unittest.TestCase):
                     self.assertTrue(all(image.pixelColor(x,y).alpha()<30
                                         for y in range(99,112) for x in range(160)))
 
+    def test_seven_minute_sleep_roll_timing_and_render(self):
+        from sleep_motion import sleep_roll
+        self.assertEqual(sleep_roll(419.99),0)
+        self.assertAlmostEqual(sleep_roll(420.7),.5)
+        self.assertEqual(sleep_roll(422),1)
+        self.assertEqual(sleep_roll(464),0)
+        self.assertEqual(sleep_roll(842),1)
+        self.pup.start_sleep(self.now,600)
+        self.assertEqual(self.pup.sleep_started,self.now-600)
+        hashes=[]
+        for elapsed in (0,420.7,422):
+            im=QImage(160,112,QImage.Format_ARGB32_Premultiplied)
+            im.fill(Qt.transparent);p=QPainter(im)
+            draw_dog(p,'sleep',0,appearance=Appearance(),sleep_elapsed=elapsed)
+            p.end();hashes.append(bytes(im.constBits()))
+        self.assertEqual(len(set(hashes)),3)
+        self.assertEqual(self.pup.state,'sleep')
+        self.pup.wake(self.now)
+        self.assertEqual(self.pup.state,'wake')
+
 
 if __name__ == '__main__':
     unittest.main()

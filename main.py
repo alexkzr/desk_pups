@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (QApplication, QWidget, QMenu, QSystemTrayIcon,
 from artwork import draw_bed, draw_dog, rear_drop_offset, WALK_SPEED, RUN_SPEED
 from appearance import Appearance, STYLES, COATS, FURS
 from dragging import Suspension, draw_hanging
-from dragon_art import flame as draw_flame, village as draw_village, dragon_dropping
+from dragon_art import flame as draw_flame, village as draw_village, dragon_dropping, dragon_mouth
 
 DATA = Path(os.environ.get('LOCALAPPDATA', str(Path.home()))) / 'Drakarium'
 SLEEP_SECONDS = 20 * 60
@@ -57,8 +57,7 @@ class FireBreath(QWidget):
     def advance(self):
         self.phase+=.033
         pet=self.owner
-        mouth_y=90 if pet.state=='hunt_fire' else 50
-        mouth_x=140 if pet.state=='hunt_fire' else 148
+        mouth_x,mouth_y=dragon_mouth(pet.state,pet.phase,pet.feeding_progress())
         x=pet.xf+(mouth_x if pet.direction>0 else 160-mouth_x-190)
         self.move(round(x),round(pet.yf+pet.flight_offset+mouth_y-35))
         self.update()
@@ -312,6 +311,10 @@ class Pup(QWidget):
         if self.village:self.village.close();self.village=None
         if self.flame:self.flame.close();self.flame=None
         self.flight_offset=0.
+
+    def feeding_progress(self,now=None):
+        now=time.monotonic() if now is None else now
+        return max(0,min(1,(now-(self.deadline-2.5))/.4)) if self.state=='hunt_fire' else 1.
 
     def can_breathe_fire(self):
         return self.drag is None and self.state in ('walk','sit','lie') and not self.overfeed and not (self.flame and self.flame.isVisible())
@@ -883,7 +886,8 @@ class Pup(QWidget):
             state = 'wake' if elapsed < .9 else 'walk'
         draw_dog(p, state, self.phase, self.animated_sit_pose(time.monotonic()),elapsed,
                  self.appearance,self.ear_angle,chubby=self.fatness,
-                 sleep_elapsed=max(0,time.monotonic()-getattr(self,'sleep_started',time.monotonic())))
+                 sleep_elapsed=max(0,time.monotonic()-getattr(self,'sleep_started',time.monotonic())),
+                 feeding_progress=self.feeding_progress())
         p.restore()
         if self.state == 'eat':
             p.setPen(QColor('#81562f'))

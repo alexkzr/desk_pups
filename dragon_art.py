@@ -11,6 +11,18 @@ PALETTES=(
 FIRE_COLORS=('#ff8a24','#ed3b28','#ffe138','#438cff')
 
 
+def feeding_pose(progress=1.,phase=0.,chewing=False):
+    t=max(0,min(1,progress));t=t*t*(3-2*t)
+    return (105-2*t,36+27*t+(math.sin(phase*9)*.8*t if chewing else 0),
+            25*t+(math.sin(phase*8)*2*t if chewing else 0))
+
+def dragon_mouth(state,phase=0.,progress=1.):
+    x,y,tilt=feeding_pose(progress,phase,state=='eat') if state in ('hunt_fire','eat') else (105,36,0)
+    a=math.radians(tilt)
+    return (x+10+34*math.cos(a)-3*math.sin(a),
+            y+10+34*math.sin(a)+3*math.cos(a))
+
+
 def treasure(p,opacity=1):
     from artwork import ellipse,path
     p.save();p.setOpacity(opacity);p.setPen(Qt.NoPen)
@@ -139,13 +151,35 @@ class DragonArtist:
                 self.tucked_leg(x,74,True);continue
             dx,lift=foot_cycle(t+index*math.pi+math.pi,flight) if moving else (0,0)
             self.leg(x,74+bob,x+dx,92 if flight else 98-lift,True)
-        body=path([(47,74),(43,63,48,53,63,54),(77,55,87,59,96,50),
-                   (101,43,104,39,112,39),(126,40,130,55,125,68),
+        feeding=state in ('hunt_fire','eat')
+        progress=getattr(self,'feeding_progress',1.) if state=='hunt_fire' else 1.
+        amount=max(0,min(1,progress));amount=amount*amount*(3-2*amount)
+        def blend(a,b):return tuple(x+(y-x)*amount for x,y in zip(a,b))
+        body=path([(47,74),(43,63,48,53,63,54),
+                   blend((77,55,87,59,96,50),(77,55,87,59,96,58)) if feeding else (77,55,87,59,96,50),
+                   blend((101,43,104,39,112,39),(101,58,106,60,112,64)) if feeding else (101,43,104,39,112,39),
+                   blend((126,40,130,55,125,68),(120,67,123,74,120,79)) if feeding else (126,40,130,55,125,68),
                    (120,82,111,88,101,90),(85,93,69,88,57,88),(49,88,44,82,47,74)])
+        if feeding:
+            hx,hy,tilt=feeding_pose(progress,self.phase,state=='eat')
+            angle=math.radians(tilt)
+            def joint(x,y):
+                return (hx+10+(x-10)*math.cos(angle)-(y-10)*math.sin(angle),
+                        hy+10+(x-10)*math.sin(angle)+(y-10)*math.cos(angle))
+            top,bottom=joint(9,1),joint(9,23)
+            # A continuous shoulder/neck volume overlaps the rear of the skull.
+            neck=path([(94,59),(101,52,top[0]-6,top[1]-3,*top),
+                       (top[0]+8,top[1]+4,bottom[0]+7,bottom[1]-3,*bottom),
+                       (106,88,95,83,94,72)])
+            body=body.united(neck)
         if self.chubby:
             b=QPainterPath();b.addEllipse(QRectF(37,44,90,52));body=body.united(b)
         self.fill(body,1)
         chest=path([(110,55),(125,58,123,75,109,87),(102,89),(111,73,112,66,110,55)])
+        if feeding:
+            chest=path([blend((110,55),(104,66)),
+                        blend((125,58,123,75,109,87),(116,70,117,79,109,87)),
+                        (102,89),blend((111,73,112,66,110,55),(108,80,107,72,104,66))])
         self.fill(chest,2,tone=self.light)
         for index,x in enumerate((52,110)):
             if state=='hang_body':continue
@@ -156,9 +190,9 @@ class DragonArtist:
         self.wing(94,65,flight,False,not flight)
         for x,y,height in ((49,60,7),(57,54,11),(65,55,12),(74,56,15),
                            (83,55,16),(92,52,14),(101,46,12),(109,40,9)):
+            if feeding and x>=101:continue
             self.fill(path([(x-3,y+3),(x-4,y-height),(x+6,y+1)]),4,tone=self.horn)
-        if state=='eat':self.head(103,63+math.sin(self.phase*9)*.8,25+math.sin(self.phase*8)*2,running=True)
-        elif state=='hunt_fire':self.head(103,63,25,running=True)
+        if feeding:self.head(hx,hy,tilt,running=True)
         else:self.head(105,36+bob,-4 if flight else self.perch_tilt,running=state=='fire')
 
     def curled(self,unfold=0,show_head=True):

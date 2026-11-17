@@ -1009,6 +1009,48 @@ class BehaviorTests(unittest.TestCase):
                 self.assertEqual(tucked.call_count,4)
         p.end()
 
+    def test_feeding_head_overlaps_continuous_neck_for_all_poses_and_colors(self):
+        original=Artist.fill
+        for coat in range(4):
+            for fat in (0,1):
+                for direction in (-1,1):
+                    for progress in (0,.25,.5,.75,1):
+                        im=QImage(160,112,QImage.Format_ARGB32_Premultiplied)
+                        im.fill(Qt.transparent);p=QPainter(im)
+                        if direction<0:p.translate(160,0);p.scale(-1,1)
+                        parts={}
+                        def record(artist,shape,part=0,*args,**kwargs):
+                            if part in (1,30):parts[part]=artist.p.transform().map(shape)
+                            return original(artist,shape,part,*args,**kwargs)
+                        with patch.object(Artist,'fill',autospec=True,side_effect=record):
+                            draw_dog(p,'hunt_fire',.6,appearance=Appearance(coat=coat),chubby=fat,feeding_progress=progress)
+                        p.end()
+                        intersection=parts[1].intersected(parts[30]).boundingRect()
+                        self.assertGreater(intersection.width(),3)
+                        self.assertGreater(intersection.height(),3)
+
+    def test_feeding_tilt_progress_and_breath_follow_the_mouth(self):
+        from dragon_art import dragon_mouth
+        self.pup.state='hunt_fire';self.pup.xf=100.;self.pup.yf=200.
+        heights=[]
+        for progress in (0,.5,1):
+            self.pup.deadline=self.now+2.5-.4*progress
+            self.assertAlmostEqual(self.pup.feeding_progress(self.now),progress)
+            mouth_x,mouth_y=dragon_mouth('hunt_fire',self.pup.phase,progress)
+            heights.append(mouth_y)
+            for direction in (-1,1):
+                self.pup.direction=direction
+                with patch('main.time.monotonic',return_value=self.now):
+                    effect=FireBreath(self.pup)
+                try:
+                    expected_x=100+(mouth_x if direction>0 else 160-mouth_x-190)
+                    self.assertEqual(effect.x(),round(expected_x))
+                    self.assertEqual(effect.y(),round(200+mouth_y-35))
+                finally:effect.close()
+        self.assertLess(heights[0],heights[1])
+        self.assertLess(heights[1],heights[2])
+        self.assertLess(abs(heights[2]-90),2)
+
 
 if __name__ == '__main__':
     unittest.main()

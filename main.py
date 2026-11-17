@@ -165,7 +165,9 @@ def window_tops(excluded):
         for a, b, c, e in covers:
             if b <= top < e:
                 spans = [(x, y) for l, r in spans for x, y in ((l, min(r, a)), (max(l, c), r)) if y-x >= 140]
-        if not user.IsZoomed(hwnd):
+        fullscreen=(rect.left<=info.monitor.left and rect.top<=info.monitor.top
+                    and rect.right>=info.monitor.right and rect.bottom>=info.monitor.bottom)
+        if not user.IsZoomed(hwnd) and not fullscreen:
             surfaces.extend((int(hwnd), l, top, r) for l, r in spans if top >= screen.geometry().top()+80)
         covers.append((left, top, right, bottom))
         return True
@@ -243,6 +245,11 @@ class Pup(QWidget):
         self.flight_origin=(0.,0.)
         self.flight_target=(0.,0.)
         self.flight_anchor=None
+        self.travel_window=None
+        self.travel_fraction=.5
+        self.travel_duration=2.
+        self.pending_sleep=False
+        self.next_flight=time.monotonic()+random.uniform(35,75)
         self.meal_started=0.
         self.next_fire=time.monotonic()+random.uniform(75,150)
         self.wake_started = 0.
@@ -358,6 +365,9 @@ class Pup(QWidget):
     def begin_drag(self, cursor):
         self.clear_village()
         self.finish_release()
+        self.travel_window=None
+        self.pending_sleep=False
+        self.pending_feed=False
         self.drag_snapshot=self.drag_image(self.state)
         self.wake(dragging=True)
         self.clear_bed()
@@ -405,7 +415,7 @@ class Pup(QWidget):
         left,_,right = self.ground()
         if self.anchor:
             _,left,_,right = self.anchor
-        return not self.overfeed and right-left >= 420 and self.energy >= 55 and self.hunger < 45 and self.state not in ('sleep','wake','eat','poop','to_bed','fly_meal','hunt_fire','fire') and self.drag is None
+        return not self.overfeed and right-left >= 420 and self.energy >= 55 and self.hunger < 45 and self.state not in ('sleep','wake','eat','poop','to_bed','fly_meal','travel_fly','hunt_fire','fire') and self.drag is None
 
     def start_zoomies(self, now=None):
         now = time.monotonic() if now is None else now
@@ -430,6 +440,9 @@ class Pup(QWidget):
 
     def start_sleep(self, now=None, duration=SLEEP_SECONDS):
         now = time.monotonic() if now is None else now
+        if self.state=='travel_fly':
+            self.pending_sleep=True
+            return
         self.clear_village()
         self.clear_bed()
         self.state, self.deadline = 'sleep', now+duration
@@ -478,6 +491,10 @@ class Pup(QWidget):
 
     def feed(self):
         if self.drag is None:
+            if self.state=='travel_fly':
+                if self.pending_feed:self.add_extra_food()
+                self.pending_feed=True
+                return
             if self.state in ('fly_meal','hunt_fire'):
                 self.add_extra_food()
                 return
@@ -498,6 +515,79 @@ class Pup(QWidget):
             if self.has_eaten and self.hunger<20:
                 self.add_extra_food()
             self.launch_hunt()
+
+    def flight_surfaces(self):
+        screen=QApplication.screenAt(QPoint(round(self.xf+80),round(self.yf+70))) or QApplication.primaryScreen()
+        r=screen.availableGeometry()
+        current=self.anchor[0] if self.anchor else None
+        return [v for v in self.manager.surfaces
+                if v[0]!=current and v[3]-v[1]>=160
+                and r.left()<=v[1] and v[3]<=r.right()+1
+                and r.top()+98<=v[2]<r.bottom()+1]
+
+    def can_travel(self):
+        return (self.state in ('walk','sit','lie') and self.drag is None
+                and not self.release_rig and not self.overfeed and self.energy>=20
+                and self.hunger<70 and self.flame is None)
+
+    def start_flight(self, surface=None, now=None):
+        now=time.monotonic() if now is None else now
+        self.next_flight=now+random.uniform(35,75)
+        choices=self.flight_surfaces()
+        if not self.can_travel() or not choices:return False
+        if surface is None:surface=random.choice(choices)
+        if surface not in choices:return False
+        self.clear_bed()
+        self.travel_window=surface[0]
+        self.travel_fraction=random.uniform(.2,.8)
+        self.flight_origin=(self.xf,self.yf)
+        self.flight_target=(surface[1]+self.travel_fraction*(surface[3]-surface[1]-160),surface[2]-98)
+        self.travel_duration=max(1.4,min(5.,math.dist(self.flight_origin,self.flight_target)/185))
+        self.flight_started=now
+        self.flight_offset=0.
+        self.anchor=None
+        self.velocity=0
+        self.state='travel_fly'
+        self.direction=1 if self.flight_target[0]>=self.xf else -1
+        return True
+
+    def tick_flight(self, now, dt):
+        # Replan from the visible position if the destination moves or vanishes.
+        if self.travel_window is not None:
+            matches=[v for v in self.flight_surfaces() if v[0]==self.travel_window]
+            if matches:
+                span=min(matches,key=lambda v:abs((v[1]+v[3])/2-(self.flight_target[0]+80)))
+                target=(span[1]+self.travel_fraction*(span[3]-span[1]-160),span[2]-98)
+            else:
+                self.travel_window=None
+                left,floor,right=self.ground()
+                target=(max(left,min(right-160,self.xf)),floor-98)
+            if math.dist(target,self.flight_target)>2:
+                self.flight_origin=(self.xf,self.yf+self.flight_offset)
+                self.flight_target=target
+                self.flight_offset=0.
+                self.flight_started=now
+                self.travel_duration=max(1.,min(5.,math.dist(self.flight_origin,target)/185))
+        progress=min(1,max(0,(now-self.flight_started)/self.travel_duration))
+        ease=progress*progress*(3-2*progress)
+        self.xf=self.flight_origin[0]+(self.flight_target[0]-self.flight_origin[0])*ease
+        self.yf=self.flight_origin[1]+(self.flight_target[1]-self.flight_origin[1])*ease
+        self.flight_offset=-math.sin(progress*math.pi)*min(65,20+self.travel_duration*10)
+        self.energy=max(0,self.energy-dt*.6)
+        if progress>=1-1e-8:
+            self.flight_offset=0.
+            matches=[v for v in self.manager.surfaces if v[0]==self.travel_window
+                     and v[1]<=self.xf and self.xf+160<=v[3] and abs(v[2]-98-self.yf)<.5]
+            self.anchor=matches[0] if matches else None
+            self.travel_window=None
+            self.landing_started=now
+            self.next_flight=now+random.uniform(35,75)
+            self.state,self.deadline='settle',now+.35
+            if self.pending_feed or self.hunger>=70:
+                self.pending_feed=False;self.pending_sleep=False;self.feed()
+            elif self.pending_sleep:
+                self.pending_sleep=False;self.start_sleep(now)
+        self.place_normal();self.update()
 
     def ground(self):
         s = QApplication.screenAt(QPoint(round(self.xf+80),round(self.yf+70))) or QApplication.primaryScreen()
@@ -527,6 +617,9 @@ class Pup(QWidget):
             return
         if self.release_rig and now-self.release_started >= .35:
             self.finish_release()
+        if self.state=='travel_fly':
+            self.tick_flight(now,dt)
+            return
         if self.state=='fly_meal':
             progress=min(1,max(0,(now-self.flight_started)/2.2))
             t=progress*progress*(3-2*progress)
@@ -654,6 +747,9 @@ class Pup(QWidget):
             self.state, self.deadline = 'poop', now+3
         else:
             self.energy = max(0,self.energy-dt*.13)
+            if now>=self.next_flight and self.can_travel() and self.hunger<45:
+                if self.start_flight(now=now):
+                    self.place_normal();self.update();return
             if now >= self.next_zoomies and self.can_zoom():
                 self.start_zoomies(now)
             elif self.energy < 15 and now >= self.awake_until:
@@ -866,6 +962,29 @@ class Manager:
         m.aboutToShow.connect(lambda:fire_action.setEnabled(any(p.can_breathe_fire() for p in ([pup] if pup else self.pups))))
         m.addAction('Уложить спать',lambda:self.sleep(pup))
         if pup:
+            flights=m.addMenu('Перелететь на окно')
+            def refresh_flights():
+                flights.clear()
+                options=pup.flight_surfaces()
+                if not options:
+                    flights.addAction('Нет подходящих окон').setEnabled(False)
+                else:
+                    any_window=flights.addAction('Случайное окно',lambda:pup.start_flight())
+                    any_window.setEnabled(pup.can_travel())
+                    flights.addSeparator()
+                    seen=set()
+                    for surface in options:
+                        if surface[0] in seen:continue
+                        seen.add(surface[0])
+                        title=f'Окно {surface[0]}'
+                        if sys.platform=='win32':
+                            text=ctypes.create_unicode_buffer(256)
+                            ctypes.windll.user32.GetWindowTextW(wintypes.HWND(surface[0]),text,256)
+                            title=text.value or title
+                        action=flights.addAction(title[:70],lambda _checked=False,s=surface:pup.start_flight(s))
+                        action.setEnabled(pup.can_travel())
+            flights.aboutToShow.connect(refresh_flights)
+            refresh_flights()
             m.addAction('Внешность…',lambda:self.appearance_dialog(pup))
             zoom = m.addAction('Устроить zoomies!',lambda:pup.start_zoomies())
             zoom.setEnabled(pup.can_zoom())
@@ -1009,7 +1128,23 @@ def main():
             pet.start_sleep()
             pet.deadline=time.monotonic()
         QTimer.singleShot(11000,recover)
-        QTimer.singleShot(12500,app.quit)
+        def smoke_flight():
+            manager.scan.stop()
+            r=app.primaryScreen().availableGeometry()
+            surface=(90001,r.left()+180,r.top()+220,r.left()+620)
+            manager.surfaces=[surface]
+            flyer=manager.pups[2]
+            flyer.clear_village();flyer.clear_bed();flyer.anchor=None
+            flyer.xf=float(r.left()+20);flyer.yf=float(r.bottom()+1-98)
+            flyer.state='walk';flyer.hunger=10;flyer.energy=90;flyer.overfeed=0
+            assert flyer.start_flight(surface)
+        def smoke_flight_landed():
+            flyer=manager.pups[2]
+            if not flyer.anchor or flyer.anchor[0]!=90001:
+                app.exit(2)
+        QTimer.singleShot(13000,smoke_flight)
+        QTimer.singleShot(18500,smoke_flight_landed)
+        QTimer.singleShot(19500,app.quit)
     result = app.exec()
     if mutex:
         ctypes.windll.kernel32.CloseHandle(wintypes.HANDLE(mutex))

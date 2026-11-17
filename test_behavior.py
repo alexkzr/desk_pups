@@ -882,6 +882,133 @@ class BehaviorTests(unittest.TestCase):
         self.assertGreater(len(gold),20)
         self.assertEqual(im.pixelColor(0,0).alpha(),0)
 
+    def flight_scene(self):
+        r=self.app.primaryScreen().availableGeometry()
+        self.pup.xf=float(r.left()+20);self.pup.yf=float(r.bottom()+1-98)
+        self.pup.anchor=None;self.pup.state='walk';self.pup.hunger=10
+        self.pup.energy=90;self.pup.next_fire=self.now+1000
+        a=(1001,r.left()+180,r.top()+220,r.left()+600)
+        b=(1002,r.left()+40,r.top()+350,r.left()+470)
+        self.manager.surfaces=[a,b]
+        return a,b
+
+    def finish_flight(self):
+        self.now=self.pup.flight_started+self.pup.travel_duration
+        self.pup.tick(self.now)
+
+    def test_taskbar_to_window_flight_lands_on_top(self):
+        a,b=self.flight_scene()
+        self.assertTrue(self.pup.start_flight(a,self.now))
+        self.assertEqual(self.pup.state,'travel_fly')
+        self.assertIsNone(self.pup.anchor)
+        self.now+=self.pup.travel_duration/2;self.pup.tick(self.now)
+        self.assertLess(self.pup.flight_offset,0)
+        self.assertFalse(self.pup.breathe_fire(self.now))
+        self.assertFalse(self.pup.can_zoom())
+        self.finish_flight()
+        self.assertEqual(self.pup.anchor,a)
+        self.assertAlmostEqual(self.pup.yf+98,a[2])
+        self.assertGreaterEqual(self.pup.xf,a[1])
+        self.assertLessEqual(self.pup.xf+160,a[3])
+        self.assertEqual(self.pup.state,'settle')
+        self.assertEqual(self.pup.flight_offset,0)
+
+    def test_window_to_other_window_in_both_vertical_directions(self):
+        a,b=self.flight_scene()
+        for origin,destination in ((a,b),(b,a)):
+            self.pup.anchor=origin;self.pup.xf=float(origin[1]+20);self.pup.yf=float(origin[2]-98)
+            self.pup.state='sit'
+            self.assertNotIn(origin,self.pup.flight_surfaces())
+            self.assertTrue(self.pup.start_flight(destination,self.now))
+            self.finish_flight()
+            self.assertEqual(self.pup.anchor,destination)
+
+    def test_flight_retargets_a_moved_window_without_position_jump(self):
+        a,b=self.flight_scene();self.pup.start_flight(a,self.now)
+        self.now+=.4;self.pup.tick(self.now)
+        x,y=self.pup.xf,self.pup.yf+self.pup.flight_offset
+        moved=(a[0],a[1]+50,a[2]+35,a[3]+50);self.manager.surfaces=[moved,b]
+        self.step(.01)
+        self.assertAlmostEqual(self.pup.xf,x)
+        self.assertAlmostEqual(self.pup.yf+self.pup.flight_offset,y)
+        self.finish_flight()
+        self.assertEqual(self.pup.anchor,moved)
+
+    def test_missing_or_occluded_destination_returns_to_taskbar(self):
+        a,b=self.flight_scene();self.pup.start_flight(a,self.now)
+        self.step(.4);self.manager.surfaces=[]
+        self.step();self.assertIsNone(self.pup.travel_window)
+        self.finish_flight()
+        self.assertIsNone(self.pup.anchor)
+        self.assertEqual(self.pup.yf+98,self.pup.ground()[1])
+
+    def test_too_narrow_destination_also_aborts_safely(self):
+        a,b=self.flight_scene();self.pup.start_flight(a,self.now)
+        self.manager.surfaces=[(a[0],a[1],a[2],a[1]+100)]
+        self.step();self.finish_flight()
+        self.assertIsNone(self.pup.anchor)
+        self.assertEqual(self.pup.yf+98,self.pup.ground()[1])
+
+    def test_no_flight_during_meals_sleep_overfeeding_or_drag(self):
+        a,b=self.flight_scene()
+        for state in ('eat','sleep','wake','poop','fire','fly_meal','hunt_fire','travel_fly','to_bed','fall'):
+            self.pup.state=state
+            self.assertFalse(self.pup.start_flight(a,self.now),state)
+        self.pup.state='walk';self.pup.overfeed=35
+        self.assertFalse(self.pup.start_flight(a,self.now))
+        self.pup.overfeed=0;self.pup.energy=10
+        self.assertFalse(self.pup.start_flight(a,self.now))
+        self.pup.energy=90;self.pup.hunger=80
+        self.assertFalse(self.pup.start_flight(a,self.now))
+
+    def test_feed_or_sleep_requested_in_flight_waits_until_landing(self):
+        a,b=self.flight_scene();self.pup.start_flight(a,self.now)
+        self.pup.feed()
+        self.assertEqual(self.pup.state,'travel_fly')
+        self.assertTrue(self.pup.pending_feed)
+        self.finish_flight()
+        self.assertEqual(self.pup.state,'fly_meal')
+        self.pup.clear_village();self.pup.state='sit'
+        self.assertTrue(self.pup.start_flight(b,self.now))
+        self.pup.start_sleep(self.now)
+        self.assertEqual(self.pup.state,'travel_fly')
+        self.assertIsNone(self.pup.bed)
+        self.finish_flight()
+        self.assertEqual(self.pup.state,'sleep')
+        self.assertEqual(self.pup.anchor,b)
+
+    def test_dragging_interrupts_travel(self):
+        a,b=self.flight_scene();self.pup.start_flight(a,self.now)
+        self.step(.4);self.pup.press_offset=QPointF(80,60).toPoint()
+        self.pup.begin_drag(QPointF(self.pup.xf+80,self.pup.yf+60).toPoint())
+        self.assertIsNone(self.pup.travel_window)
+        self.assertNotEqual(self.pup.state,'travel_fly')
+        self.assertEqual(self.pup.flight_offset,0)
+        self.assertIsNotNone(self.pup.drag)
+
+    def test_automatic_flight_uses_its_timer(self):
+        a,b=self.flight_scene();self.pup.next_flight=self.now-.1
+        self.pup.next_zoomies=self.now+1000;self.pup.deadline=self.now+1000
+        self.step()
+        self.assertEqual(self.pup.state,'travel_fly')
+        self.assertGreater(self.pup.next_flight,self.now)
+
+    def test_flight_surfaces_exclude_narrow_and_offscreen_spans(self):
+        a,b=self.flight_scene();r=self.app.primaryScreen().availableGeometry()
+        self.manager.surfaces+=[(3,a[1],a[2],a[1]+159),(4,r.left()-200,a[2],r.left()+30),
+                               (5,a[1],r.top()+20,a[3])]
+        self.assertEqual(self.pup.flight_surfaces(),[a,b])
+
+    def test_all_flying_states_use_four_tucked_legs_without_walking(self):
+        image=QImage(160,112,QImage.Format_ARGB32_Premultiplied)
+        image.fill(Qt.transparent);p=QPainter(image)
+        for state in ('travel_fly','fly_meal','zoomies'):
+            with patch.object(Artist,'leg',autospec=True) as leg,patch.object(Artist,'tucked_leg',autospec=True) as tucked:
+                draw_dog(p,state,.8,appearance=Appearance())
+                self.assertEqual(leg.call_count,0)
+                self.assertEqual(tucked.call_count,4)
+        p.end()
+
 
 if __name__ == '__main__':
     unittest.main()

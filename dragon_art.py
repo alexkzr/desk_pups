@@ -61,6 +61,14 @@ class DragonArtist:
         self.fill(q,10,tone=self.shade if far else self.base)
         for dx in (0,3,6):stroke(self.p,((foot_x+dx,floor-2),(foot_x+dx+3,floor-.4)),self.horn,.9)
 
+    def tucked_leg(self,x,root,far=False):
+        from artwork import path,stroke
+        q=path([(x-5,root),(x-10,root+5,x-1,root+12,x+5,root+10),
+                (x+11,root+9,x+11,root+3,x+6,root+2),
+                (x+2,root+3,x+2,root+6,x-1,root+5),(x-3,root+4,x-2,root+1,x-5,root)])
+        self.fill(q,10,tone=self.shade if far else self.base)
+        for dx in (0,2,4):stroke(self.p,((x+dx+4,root+8),(x+dx+2,root+10)),self.horn,.75)
+
     def tail(self,x,y,running=False,resting=False):
         from artwork import path
         sway=math.sin(self.phase*5)*(4 if running else 2)
@@ -120,13 +128,15 @@ class DragonArtist:
 
     def standing(self,state):
         from artwork import path,foot_cycle,RUN_FREQUENCY,WALK_FREQUENCY
-        flight=state in ('fly_meal','zoomies');moving=state=='walk' or flight
+        flight=state in ('fly_meal','zoomies','travel_fly');moving=state=='walk'
         t=self.phase*(RUN_FREQUENCY if flight else WALK_FREQUENCY)
         bob=math.sin(t)*.7 if moving else 0
         self.wing(96,65,flight,True,not flight)
         self.tail(48,58+bob,flight)
         for index,x in enumerate((58,109)):
             if state=='hang_body':continue
+            if flight:
+                self.tucked_leg(x,74,True);continue
             dx,lift=foot_cycle(t+index*math.pi+math.pi,flight) if moving else (0,0)
             self.leg(x,74+bob,x+dx,92 if flight else 98-lift,True)
         body=path([(47,74),(43,63,48,53,63,54),(77,55,87,59,96,50),
@@ -139,6 +149,8 @@ class DragonArtist:
         self.fill(chest,2,tone=self.light)
         for index,x in enumerate((52,110)):
             if state=='hang_body':continue
+            if flight:
+                self.tucked_leg(x,74);continue
             dx,lift=foot_cycle(t+index*math.pi,flight) if moving else (0,0)
             self.leg(x,74+bob,x+dx,92 if flight else 98-lift)
         self.wing(94,65,flight,False,not flight)

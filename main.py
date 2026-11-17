@@ -436,6 +436,7 @@ class Pup(QWidget):
         self.clear_village()
         self.clear_bed()
         self.state, self.deadline = 'sleep', now+duration
+        self.sleep_started = now-(SLEEP_SECONDS-duration)
         self.pending_feed = False
         self.bed = Bed()
         self.bed.move(round(self.xf+8),round(self.yf+64))
@@ -788,7 +789,8 @@ class Pup(QWidget):
             elapsed = max(0,time.monotonic()-self.wake_started)
             state = 'wake' if elapsed < .9 else 'walk'
         draw_dog(p, state, self.phase, self.animated_sit_pose(time.monotonic()),elapsed,
-                 self.appearance,self.ear_angle,chubby=self.fatness)
+                 self.appearance,self.ear_angle,chubby=self.fatness,
+                 sleep_elapsed=max(0,time.monotonic()-getattr(self,'sleep_started',time.monotonic())))
         p.restore()
         if self.state == 'eat':
             p.setPen(QColor('#81562f'))

@@ -78,11 +78,13 @@ def spots(seed, part):
 
 from dragon_art import DragonArtist as Artist, treasure as draw_bed
 
-def draw_dog(p,state,phase,sit_pose=0,wake_progress=0,appearance=None,ear_angle=0,hang_angles=None,guilty=0.,chubby=0.):
+def draw_dog(p,state,phase,sit_pose=0,wake_progress=0,appearance=None,ear_angle=0,hang_angles=None,guilty=0.,chubby=0., sleep_elapsed=0.):
     appearance=appearance or Appearance()
     artist=Artist(p,appearance,phase,ear_angle,hang_angles,guilty,chubby)
     p.save();p.setPen(Qt.NoPen)
-    if state=='sleep':artist.curled()
+    if state=='sleep':
+        from sleep_motion import draw_sleeping
+        draw_sleeping(p,artist,sleep_elapsed)
     elif state=='wake':artist.curled(min(1,wake_progress/.9))
     elif state=='sit':
         poses=(0,-8,6,-13)

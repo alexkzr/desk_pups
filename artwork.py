@@ -388,7 +388,7 @@ class Artist:
         self.leg(chest+13,shoulder+19,chest+14,98)
         self.head(hx,hy,tilt,front)
 
-    def curled(self, unfold=0):
+    def curled(self, unfold=0, show_head=True):
         p=self.p
         p.save()
         p.translate(0,math.sin(self.phase*1.6)*.6*(1-unfold))
@@ -412,7 +412,8 @@ class Artist:
         p.translate(-12,-10)
         previous=self.ear_angle
         self.ear_angle*=.1+.9*unfold
-        self.head(0,0,sleeping=unfold<.15)
+        if show_head:
+            self.head(0,0,sleeping=unfold<.15)
         self.ear_angle=previous
         p.restore()
         p.restore()

@@ -3,12 +3,16 @@ import os
 os.environ['QT_QPA_PLATFORM'] = 'offscreen'
 import time
 import unittest
+import hashlib
+import random
+from unittest.mock import patch
 from types import SimpleNamespace
 from PySide6.QtCore import Qt, QPointF
 from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QImage, QPainter
 from main import Pup, SLEEP_SECONDS
 from artwork import draw_dog
+from appearance import Appearance
 
 
 class FakeManager:
@@ -177,7 +181,90 @@ class BehaviorTests(unittest.TestCase):
         for image in (right,left):
             self.assertTrue(all(image.pixelColor(x,y).alpha()==0
                                 for y in range(99,112) for x in range(160)))
-        self.assertEqual(right.mirrored(True,False),left)
+        # Compare the prop, not floating-point gradient rounding on the dog.
+        for x in range(5,40):
+            for y in range(85,99):
+                self.assertEqual(right.pixelColor(159-x,y),left.pixelColor(x,y))
+
+    def test_saved_appearance_and_marbling_survive_restart(self):
+        self.pup.appearance = Appearance(3,2,1,139871)
+        other = Pup(self.manager,self.pup.serialize(self.now))
+        try:
+            self.assertEqual(other.appearance,self.pup.appearance)
+        finally:
+            other.close()
+
+    def test_old_and_corrupt_appearance_settings_are_supported(self):
+        for value in (None,[],{}, {'style':99,'coat':-8,'fur':'oops','seed':None}):
+            look=Appearance.restore(value)
+            self.assertIn(look.style,range(4))
+            self.assertIn(look.coat,range(3))
+            self.assertIn(look.fur,range(2))
+
+    def test_new_dogs_randomize_all_four_appearance_fields(self):
+        with patch('appearance.random.randrange',side_effect=[3,2,1,12345]):
+            self.assertEqual(Appearance.random(),Appearance(3,2,1,12345))
+
+    def test_all_24_looks_are_distinct_and_render_all_poses(self):
+        digests=set()
+        rng_state=random.getstate()
+        for style in range(4):
+            for coat in range(3):
+                for fur in range(2):
+                    look=Appearance(style,coat,fur,7128)
+                    for state in ('walk','sit','eat','sleep','wake','lie','zoomies'):
+                        image=QImage(160,112,QImage.Format_ARGB32)
+                        image.fill(Qt.transparent)
+                        p=QPainter(image)
+                        draw_dog(p,state,.7,1,.4,look,8)
+                        p.end()
+                        self.assertTrue(any(image.pixelColor(x,80).alpha() for x in range(160)))
+                        if state=='walk':
+                            digests.add(hashlib.sha256(image.constBits()).hexdigest())
+        self.assertEqual(len(digests),24)
+        self.assertEqual(random.getstate(),rng_state)
+
+    def test_zoomies_respect_space_needs_and_stop(self):
+        self.pup.ground=lambda:(0,800,1200)
+        self.pup.xf=250
+        self.pup.hunger=10
+        self.pup.energy=90
+        self.assertTrue(self.pup.start_zoomies(self.now))
+        self.pup.direction=1
+        self.step()
+        self.assertAlmostEqual(self.pup.xf,271)
+        self.assertLess(self.pup.energy,90)
+        self.assertGreaterEqual(self.pup.deadline,self.now+4)
+        self.now=self.pup.deadline
+        self.pup.tick(self.now)
+        self.assertEqual(self.pup.state,'walk')
+        self.pup.anchor=(1,0,300,360)
+        self.assertFalse(self.pup.start_zoomies(self.now))
+        self.pup.anchor=None
+        self.pup.hunger=80
+        self.assertFalse(self.pup.start_zoomies(self.now))
+        self.pup.hunger=10
+        self.pup.energy=20
+        self.assertFalse(self.pup.start_zoomies(self.now))
+        self.pup.energy=90
+        self.pup.start_sleep(self.now)
+        self.assertFalse(self.pup.start_zoomies(self.now))
+
+    def test_ear_motion_has_inertia_and_stays_stable(self):
+        self.pup.state='zoomies'
+        self.pup.animate_ears(.1)
+        first=self.pup.ear_angle
+        self.assertGreater(first,0)
+        self.assertLess(first,48)
+        for _ in range(100):
+            self.pup.animate_ears(.1)
+        self.assertAlmostEqual(self.pup.ear_angle,48,places=2)
+        self.pup.state='sleep'
+        self.pup.animate_ears(.033)
+        self.assertGreater(self.pup.ear_angle,0)
+        for _ in range(100):
+            self.pup.animate_ears(.1)
+        self.assertAlmostEqual(self.pup.ear_angle,0,places=2)
 
 
 if __name__ == '__main__':

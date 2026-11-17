@@ -14,8 +14,9 @@ import time
 from PySide6.QtCore import Qt, QTimer, QPoint
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QIcon, QPixmap, QFont
 from PySide6.QtWidgets import (QApplication, QWidget, QMenu, QSystemTrayIcon,
-    QDialog, QFormLayout, QSpinBox, QDialogButtonBox, QMessageBox)
+    QDialog, QFormLayout, QSpinBox, QComboBox, QDialogButtonBox, QMessageBox)
 from artwork import draw_bed, draw_dog
+from appearance import Appearance, STYLES, COATS, FURS
 
 DATA = Path(os.environ.get('LOCALAPPDATA', str(Path.home()))) / 'Takson'
 SLEEP_SECONDS = 20 * 60
@@ -126,6 +127,10 @@ class Pup(QWidget):
         self.setFixedSize(160, 112)
         self.hunger = bounded((saved or {}).get('hunger'), random.uniform(5,25))
         self.energy = bounded((saved or {}).get('energy'), 90)
+        self.appearance = Appearance.restore((saved or {}).get('appearance'))
+        self.ear_angle = 0.
+        self.ear_velocity = 0.
+        self.next_zoomies = time.monotonic()+random.uniform(90,180)
         self.state, self.direction, self.phase = 'walk', random.choice([-1,1]), 0.
         self.deadline = time.monotonic()+random.uniform(6,14)
         self.digest_at = None
@@ -159,6 +164,38 @@ class Pup(QWidget):
         if self.bed:
             self.bed.close()
             self.bed = None
+
+    def serialize(self, now=None):
+        now = time.monotonic() if now is None else now
+        return {'hunger':self.hunger,'energy':self.energy,
+                'appearance':self.appearance.serialize(),
+                'sleep_remaining':max(0,self.deadline-now) if self.state == 'sleep' else 0}
+
+    def can_zoom(self):
+        left,_,right = self.ground()
+        if self.anchor:
+            _,left,_,right = self.anchor
+        return right-left >= 420 and self.energy >= 55 and self.hunger < 45 and self.state not in ('sleep','wake','eat','poop') and self.drag is None
+
+    def start_zoomies(self, now=None):
+        now = time.monotonic() if now is None else now
+        self.next_zoomies = now+random.uniform(90,180)
+        if not self.can_zoom():
+            return False
+        self.state,self.deadline = 'zoomies',now+random.uniform(5,9)
+        return True
+
+    def animate_ears(self, dt):
+        target = (48+math.sin(self.phase*18)*13 if self.state == 'zoomies' else
+                  math.sin(self.phase*8)*9 if self.state == 'walk' else
+                  math.sin(self.phase*1.6)*.5 if self.state == 'sleep' else
+                  math.sin(self.phase*3)*2)
+        # Small stable spring steps retain inertia even when a frame is late.
+        steps = max(1,math.ceil(dt*120))
+        step = dt/steps
+        for _ in range(steps):
+            self.ear_velocity += ((target-self.ear_angle)*100-self.ear_velocity*16)*step
+            self.ear_angle += self.ear_velocity*step
 
     def start_sleep(self, now=None, duration=SLEEP_SECONDS):
         now = time.monotonic() if now is None else now
@@ -222,8 +259,9 @@ class Pup(QWidget):
         dt = min(now-self.last, .1)
         self.last = now
         self.phase += dt
+        self.animate_ears(dt)
         self.hunger = min(100, self.hunger + dt*100/(self.manager.minutes*60)*(.12 if self.state == 'sleep' else 1))
-        self.setToolTip(f'Таксон · Голод {self.hunger:.0f}% · Энергия {self.energy:.0f}%\nПеретащите мышью · ПКМ — меню')
+        self.setToolTip(f'{self.appearance.description}\nГолод {self.hunger:.0f}% · Энергия {self.energy:.0f}%\nПеретащите мышью · ПКМ — меню')
         if self.drag is not None:
             self.update()
             return
@@ -287,13 +325,20 @@ class Pup(QWidget):
                 self.manager.droppings.append(Dropping(round(self.xf+35), round(self.yf+98)))
                 self.state, self.digest_at = 'walk', None
                 self.deadline = now+8
+        elif self.state == 'zoomies':
+            self.energy = max(0,self.energy-dt*1.1)
+            self.xf += self.direction*210*dt
+            if now >= self.deadline:
+                self.state,self.deadline = 'walk',now+8
         elif self.hunger >= 70:
             self.feed()
         elif self.digest_at and now >= self.digest_at:
             self.state, self.deadline = 'poop', now+3
         else:
             self.energy = max(0,self.energy-dt*.13)
-            if self.energy < 15 and now >= self.awake_until:
+            if now >= self.next_zoomies and self.can_zoom():
+                self.start_zoomies(now)
+            elif self.energy < 15 and now >= self.awake_until:
                 self.start_sleep(now)
             elif now >= self.deadline:
                 self.state = random.choices(['walk','sit','lie','sleep'], [55,20,20,5 if now >= self.awake_until else 0])[0]
@@ -308,7 +353,7 @@ class Pup(QWidget):
             self.sit_transition = now
         lower,upper = left-4,max(left-4,right-156)
         self.xf = max(lower,min(upper,self.xf))
-        if self.state in ('walk','wake') and ((self.xf <= lower and self.direction < 0) or
+        if self.state in ('walk','wake','zoomies') and ((self.xf <= lower and self.direction < 0) or
                                             (self.xf >= upper and self.direction > 0)):
             self.direction *= -1
         self.move(round(self.xf), round(self.yf))
@@ -376,7 +421,8 @@ class Pup(QWidget):
         if state == 'wake':
             elapsed = max(0,time.monotonic()-self.wake_started)
             state = 'wake' if elapsed < .9 else 'walk'
-        draw_dog(p, state, self.phase, self.animated_sit_pose(time.monotonic()),elapsed)
+        draw_dog(p, state, self.phase, self.animated_sit_pose(time.monotonic()),elapsed,
+                 self.appearance,self.ear_angle)
         p.restore()
         if self.state == 'eat':
             p.setPen(QColor('#81562f'))
@@ -448,6 +494,10 @@ class Manager:
         m.addAction('Добавить таксу',lambda:self.add())
         m.addAction('Покормить',lambda:[p.feed() for p in ([pup] if pup else self.pups)])
         m.addAction('Уложить спать',lambda:self.sleep(pup))
+        if pup:
+            m.addAction('Внешность…',lambda:self.appearance_dialog(pup))
+            zoom = m.addAction('Устроить zoomies!',lambda:pup.start_zoomies())
+            zoom.setEnabled(pup.can_zoom())
         m.addAction('Убрать за собаками',self.clean)
         m.addAction('Настройки…',self.settings)
         if pup and len(self.pups)>1:
@@ -484,10 +534,31 @@ class Manager:
         if d.exec():
             self.minutes = interval.value()
             self.save()
+    def appearance_dialog(self,pup):
+        d = QDialog()
+        d.setWindowTitle('Таксон · Внешность')
+        form = QFormLayout(d)
+        boxes = []
+        for title,options,value in (('Модель:',STYLES,pup.appearance.style),
+                                    ('Окрас:',COATS,pup.appearance.coat),
+                                    ('Шерсть:',FURS,pup.appearance.fur)):
+            box = QComboBox()
+            box.addItems(options)
+            box.setCurrentIndex(value)
+            form.addRow(title,box)
+            boxes.append(box)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(d.accept)
+        buttons.rejected.connect(d.reject)
+        form.addRow(buttons)
+        if d.exec():
+            pup.appearance = Appearance(*(b.currentIndex() for b in boxes),pup.appearance.seed)
+            pup.update()
+            self.save()
     def save(self):
         try:
             DATA.mkdir(parents=True,exist_ok=True)
-            (DATA/'state.tmp').write_text(json.dumps({'minutes':self.minutes,'pups':[{'hunger':p.hunger,'energy':p.energy,'sleep_remaining':max(0,p.deadline-time.monotonic()) if p.state == 'sleep' else 0} for p in self.pups]}),encoding='utf-8')
+            (DATA/'state.tmp').write_text(json.dumps({'minutes':self.minutes,'pups':[p.serialize() for p in self.pups]}),encoding='utf-8')
             (DATA/'state.tmp').replace(DATA/'state.json')
         except OSError:
             pass
@@ -510,11 +581,15 @@ def main():
     app.setApplicationName('Таксон')
     manager = Manager(app)
     if args.smoke_test:
-        pup = manager.pups[0]
-        pup.feed()
-        QTimer.singleShot(300,pup.start_sleep)
-        QTimer.singleShot(600,pup.wake)
-        QTimer.singleShot(6000,app.quit)
+        while len(manager.pups)<4:
+            manager.add()
+        for i,pup in enumerate(manager.pups):
+            pup.appearance = Appearance(i%4,i%3,i%2,1729+i)
+            pup.feed()
+        QTimer.singleShot(300,lambda:[p.start_sleep() for p in manager.pups])
+        QTimer.singleShot(600,lambda:[p.wake() for p in manager.pups])
+        QTimer.singleShot(6000,lambda:[p.start_zoomies() for p in manager.pups])
+        QTimer.singleShot(7500,app.quit)
     result = app.exec()
     if mutex:
         ctypes.windll.kernel32.CloseHandle(wintypes.HANDLE(mutex))

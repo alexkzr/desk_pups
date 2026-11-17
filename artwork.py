@@ -1,8 +1,12 @@
-"""Small vector poses. All props and paws share the y=98 support line."""
+"""Bezier character rig: continuous anatomy, independent ears, stable coat patterns."""
 import math
+import random
+from functools import lru_cache
 
 from PySide6.QtCore import QPointF, QRectF, Qt
-from PySide6.QtGui import QColor, QPainterPath, QPen
+from PySide6.QtGui import QColor, QLinearGradient, QPainterPath, QPen
+
+from appearance import Appearance
 
 
 def ellipse(p, x, y, w, h, color):
@@ -18,9 +22,24 @@ def rounded(p, x, y, w, h, r, color):
 
 
 def stroke(p, points, color, width):
+    p.setBrush(Qt.NoBrush)
     p.setPen(QPen(QColor(color), width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
     p.drawLine(QPointF(*points[0]), QPointF(*points[1]))
     p.setPen(Qt.NoPen)
+
+
+def path(points):
+    q = QPainterPath()
+    q.moveTo(*points[0])
+    for segment in points[1:]:
+        if len(segment) == 6:
+            q.cubicTo(*segment)
+        elif len(segment) == 4:
+            q.quadTo(*segment)
+        else:
+            q.lineTo(*segment)
+    q.closeSubpath()
+    return q
 
 
 def draw_bed(p, opacity=1):
@@ -29,135 +48,333 @@ def draw_bed(p, opacity=1):
     rounded(p, 2, 6, 140, 28, 13, '#587d80')
     ellipse(p, 11, 4, 122, 25, '#9cb5ad')
     ellipse(p, 20, 9, 104, 18, '#e1d3b5')
-    # A low front bolster keeps the bed visibly planted on its support.
     rounded(p, 4, 23, 136, 11, 5, '#6c9694')
-    stroke(p, ((21, 29), (123, 29)), '#86aba4', 2)
+    stroke(p, ((21,29),(123,29)), '#86aba4', 2)
     p.restore()
 
 
-def draw_head(p, x=99, y=49, tilt=0, front=0, closed=False):
+@lru_cache(maxsize=512)
+def spots(seed, part):
+    rng = random.Random(seed+part*100003)
+    # Normalised, irregular patches travel with each anatomical part.
+    return tuple((rng.random(),rng.random(),rng.uniform(.05,.17),
+                  rng.uniform(.10,.24),rng.uniform(-60,60)) for _ in range(16))
+
+
+class Artist:
+    def __init__(self, p, appearance, phase, ear_angle):
+        self.p, self.look, self.phase, self.ear_angle = p,appearance,phase,ear_angle
+        self.base, self.light, self.shade, self.tan, self.outline = (
+            ('#b55b2d','#d47d41','#8a3e24','#e4a465','#67331f'),
+            ('#292831','#4b4650','#171820','#ca803f','#14151c'),
+            ('#aaa6aa','#c4bfc0','#85818c','#d49a60','#49414a'),
+        )[appearance.coat]
+
+    def fill(self, shape, part=0, tone=None, patterned=True, outline=True):
+        p = self.p
+        bounds = shape.boundingRect()
+        base = QColor(tone or self.base)
+        if self.look.style == 3:
+            p.setBrush(base)
+        else:
+            gradient = QLinearGradient(bounds.topLeft(),bounds.bottomRight())
+            gradient.setColorAt(0,base.lighter(125 if self.look.style == 1 else 114))
+            gradient.setColorAt(.5,base)
+            gradient.setColorAt(1,base.darker(112))
+            p.setBrush(gradient)
+        p.setPen(QPen(QColor(self.outline), .85 if self.look.style == 2 else .35,
+                      Qt.SolidLine,Qt.RoundCap,Qt.RoundJoin) if outline else Qt.NoPen)
+        p.drawPath(shape)
+        p.setPen(Qt.NoPen)
+        if self.look.coat == 2 and patterned:
+            p.save()
+            p.setClipPath(shape,Qt.IntersectClip)
+            for i,(x,y,w,h,angle) in enumerate(spots(self.look.seed,part)):
+                p.save()
+                p.translate(bounds.x()+x*bounds.width(),bounds.y()+y*bounds.height())
+                p.rotate(angle)
+                blob = path([(-w*bounds.width()/2,0),
+                             (-w*bounds.width(),-h*bounds.height(),w*bounds.width()/3,-h*bounds.height(),w*bounds.width()/2,0),
+                             (w*bounds.width(),h*bounds.height(),-w*bounds.width()/3,h*bounds.height(),-w*bounds.width()/2,0)])
+                p.setBrush(QColor('#45424b' if i%3 else '#706773'))
+                p.drawPath(blob)
+                p.restore()
+            p.restore()
+        if self.look.style == 2 and self.look.fur:
+            p.save()
+            p.setClipPath(shape,Qt.IntersectClip)
+            for i in range(6):
+                x = bounds.x()+bounds.width()*(i+1)/8
+                y = bounds.y()+bounds.height()*.65
+                stroke(p,((x,y),(x+3,y-2)),self.shade,.55)
+            p.restore()
+
+    def detail(self, shape, color, width=.7):
+        self.p.setBrush(Qt.NoBrush)
+        self.p.setPen(QPen(QColor(color),width,Qt.SolidLine,Qt.RoundCap,Qt.RoundJoin))
+        self.p.drawPath(shape)
+        self.p.setPen(Qt.NoPen)
+
+    def tail(self, x, y, running=False, resting=False):
+        swing = math.sin(self.phase*(15 if running else 5))* (5 if running else 2)
+        if resting:
+            shape = path([(x,y),(x-13,y+3,x-23,y+4,x-28,y+1),
+                          (x-27,y+7,x-12,y+7,x+3,y+4)])
+        else:
+            shape = path([(x+2,y+4),(x-10,y+3,x-17,y-5,x-17,y-18-swing),
+                          (x-21,y-6,x-16,y+5,x-3,y+10),(x+4,y+9)])
+        self.fill(shape,5,tone=self.base)
+        if self.look.fur:
+            fringe = path([(x-5,y+2),(x-13,y+7,x-21,y-1,x-20,y-10),
+                           (x-26,y-3,x-18,y+11,x-5,y+9)])
+            self.fill(fringe,6)
+
+    def leg(self, x, root, foot_x, floor, far=False):
+        tone = self.shade if far else self.base
+        shape = path([(x-5,root),(x-7,root+7,foot_x-5,floor-7,foot_x-5,floor-3),
+                      (foot_x-5,floor+1,foot_x+11,floor+1,foot_x+10,floor-2),
+                      (foot_x+9,floor-5,foot_x+3,floor-4,foot_x+3,floor-8),
+                      (x+6,root+8,x+6,root+2,x+5,root)])
+        self.fill(shape,10 if far else 11,tone=tone,outline=False)
+        if self.look.coat:
+            self.p.save()
+            self.p.setClipPath(shape,Qt.IntersectClip)
+            ellipse(self.p,foot_x-8,floor-8,23,12,self.tan)
+            self.p.restore()
+        if not far:
+            stroke(self.p,((foot_x+4,floor-2),(foot_x+4,floor-.5)),self.shade,.55)
+        if self.look.fur:
+            fringe = path([(x-5,root+5),(x-11,root+13,x-4,root+17,x-7,root+21),
+                           (x+1,root+18,x+2,root+13,x+4,root+8)])
+            self.fill(fringe,12,tone=tone,outline=False)
+
+    def ear(self, x, y, length, width, angle, far=False):
+        p = self.p
+        p.save()
+        p.translate(x,y)
+        p.rotate(angle)
+        length = length+(4 if self.look.fur else 0)
+        ear = path([(0,0),(-width*.75,2,-width*.65,length*.44,-width*.7,length*.72),
+                    (-width*.8,length+4,width*.48,length+7,width*.63,length*.70),
+                    (width*.76,length*.38,width*.43,-3,0,0)])
+        self.fill(ear,20 if far else 21,tone=self.shade if far else self.base)
+        if self.look.fur:
+            fringe = path([(-width*.66,length*.40),
+                           (-width*.85,length*.65,-width*.7,length*.95,-width*.86,length+2),
+                           (-width*.30,length-1,-width*.25,length+6,0,length+5),
+                           (-width*.1,length,width*.35,length+7,width*.52,length-1),
+                           (width*.65,length*.7,width*.35,length*.5,0,length*.4)])
+            self.fill(fringe,22,tone=self.base)
+            for dx in (-3,1,4):
+                line=QPainterPath(QPointF(dx, length*.40))
+                line.cubicTo(dx-4,length*.65,dx+1,length*.85,dx-1,length+1)
+                self.detail(line,self.shade,.55)
+        highlight=QPainterPath(QPointF(-width*.3,5))
+        highlight.cubicTo(-width*.55,length*.3,-width*.55,length*.65,-width*.35,length*.8)
+        self.detail(highlight,QColor(self.light).name(),.65)
+        p.restore()
+
+    def head(self, x, y, tilt=0, front=0, sleeping=False, running=False):
+        p = self.p
+        p.save()
+        p.translate(x+10,y+12)
+        p.rotate(tilt)
+        p.translate(-10,-12)
+        plush = self.look.style == 1
+        scale = 1.10 if plush else (1.03 if self.look.style == 0 else 1)
+        p.scale(scale,scale)
+        if front > .15:
+            self.ear(16,10,27,7,self.ear_angle*.65-8,True)
+        head = path([(0,23),(-6,11,-1,-3,10,-4),
+                     (20,-5,24,1,27,8),
+                     (32,11,38,10,43,9),
+                     (48,8,49,15,42,20),
+                     (35,26,27,27,22,28),
+                     (17,33,6,32,0,23)])
+        self.fill(head,30)
+        # Cheeks and muzzle; tan markings do not recolour the crown or ears.
+        p.save()
+        p.setClipPath(head,Qt.IntersectClip)
+        muzzle = path([(17,13),(24,15,35,12,46,10),(50,20,36,29,20,28),
+                       (15,25,13,20,17,13)])
+        self.fill(muzzle,31,tone=self.tan if self.look.coat else self.light,patterned=False,outline=False)
+        p.restore()
+        eye_x = 21-front*3
+        eye_y = 7
+        if self.look.coat:
+            ellipse(p,eye_x-2,eye_y-4,6,3,self.tan)
+        if sleeping:
+            eyelid=QPainterPath(QPointF(eye_x-1,eye_y+3))
+            eyelid.quadTo(eye_x+2,eye_y+5,eye_x+5,eye_y+2)
+            self.detail(eyelid,'#241c1a',1)
+        else:
+            eye_size = 5.4 if plush else (4.7 if self.look.style == 0 else 4)
+            ellipse(p,eye_x,eye_y,eye_size,eye_size+1,'#241c1a')
+            ellipse(p,eye_x+1.2,eye_y+.8,1.4,1.8,'#fff5e2')
+            if front > .5:
+                ellipse(p,12,8,2.8,4.1,'#241c1a')
+                if self.look.coat:
+                    ellipse(p,11,4,4,2.5,self.tan)
+        nose = path([(42,9),(45,6,50,8,49,11),(48,16,44,17,42,13)])
+        self.fill(nose,32,tone='#35231f',patterned=False,outline=False)
+        ellipse(p,44,8.7,2.8,1.2,'#8f7366')
+        smile=QPainterPath(QPointF(29,22))
+        smile.quadTo(35,25,40,20)
+        self.detail(smile,'#64351f',.8)
+        if running:
+            mouth=path([(29,22),(34,23,39,21,41,19),(38,30,33,31,29,22)])
+            self.fill(mouth,33,tone='#623127',patterned=False,outline=False)
+            ellipse(p,34,25,6,2.4,'#df8c78')
+        self.ear(4,7,29 if self.look.style != 1 else 31,9 if not plush else 10,
+                 self.ear_angle,False)
+        if self.look.fur:
+            beard=path([(25,27),(27,31,28,30,30,34),(32,31,35,31,37,28),
+                        (33,29,29,28,25,27)])
+            self.fill(beard,34,tone=self.tan if self.look.coat else self.light,patterned=False)
+        p.restore()
+
+    def body(self, shape, chest=None):
+        self.fill(shape,1)
+        if chest:
+            self.p.save()
+            self.p.setClipPath(shape,Qt.IntersectClip)
+            self.fill(chest,2,tone=self.tan if self.look.coat else self.light,patterned=False,outline=False)
+            self.p.restore()
+        if self.look.fur:
+            b = shape.boundingRect()
+            x,y,w = b.left()+8,b.bottom()-7,b.width()-18
+            fringe = path([(x,y),(x+w*.2,y+7,x+w*.2,y+10,x+w*.3,y+5),
+                           (x+w*.4,y+10,x+w*.55,y+6,x+w*.58,y+9),
+                           (x+w*.65,y+4,x+w*.8,y+9,x+w,y-1),
+                           (x+w,y-4,x,y-4,x,y)])
+            self.fill(fringe,3,outline=False)
+
+    def standing(self, state):
+        p=self.p
+        run=state=='zoomies'
+        eating=state=='eat'
+        low=state in ('lie','stretch')
+        gait=self.phase*(18 if run else 8)
+        bob=(-abs(math.sin(gait))*5 if run else math.sin(gait)*.7) if state in ('walk','zoomies') else 0
+        p.save()
+        if eating:
+            p.scale(.83,1)
+        root=82+bob if not low else 90
+        self.tail(28,72+bob if not low else 86,run,low)
+        for index,x in enumerate((43,108)):
+            swing=math.sin(gait+index*2.3+math.pi)
+            foot=x+swing*(15 if run else 4) if state in ('walk','zoomies') else x
+            lift=max(0,-math.cos(gait+index*2.3+math.pi))*(7 if run else 2)
+            self.leg(x,root,foot,98-lift,True)
+        top = (65 if self.look.style == 2 else 63)+bob if not low else 71
+        neck = 7 if eating else (10 if low else 24)
+        if state=='poop':
+            top-=4
+        body=path([(27,top+10),(25,top-1,37,top-5,53,top-2),
+                   (73,top+1,86,top+2,98,top-5),
+                   (107,top-min(13,neck),109,top-neck,116,top-neck),
+                   (127,top-neck-2,132,top-11,128,top+1),
+                   (125,top+12,118,top+25,106,top+27),
+                   (88,top+28,61,top+25,46,top+27),
+                   (31,top+31,25,top+23,27,top+10)])
+        chest=path([(112,top-neck+5),(125,top-neck+4,128,top-6,121,top+10),
+                    (118,top+20,112,top+24,106,top+25),
+                    (110,top+11,112,top-5,112,top-neck+5)])
+        self.body(body,chest)
+        for index,x in enumerate((36,111)):
+            swing=math.sin(gait+index*2.3)
+            foot=x+swing*(15 if run else 4) if state in ('walk','zoomies') else x
+            lift=max(0,-math.cos(gait+index*2.3))*(7 if run else 2)
+            self.leg(x,root,foot,98-lift)
+        if eating:
+            self.head(116,59+math.sin(self.phase*7),27)
+        elif low:
+            self.head(100,50,-5)
+        else:
+            self.head(105,36+bob, -8 if run else 0,running=run)
+        p.restore()
+        if eating:
+            rounded(p,121,88,34,10,4,'#437d91')
+            ellipse(p,121,85,34,7,'#e9b867')
+            for x,y in ((129,87),(135,86),(142,88),(148,87)):
+                ellipse(p,x,y,3,2,'#81562f')
+
+    def sitting(self, pose):
+        controls=[(39,78,95,54,89,29,0,0,0),
+                  (34,80,96,57,90,32,0,0,1),
+                  (56,77,88,49,81,23,0,1,0),
+                  (52,80,94,53,87,25,-12,.35,0)]
+        i=math.floor(pose)%4
+        t=pose-math.floor(pose)
+        rear,hip,chest,shoulder,hx,hy,tilt,front,relax=[a+(b-a)*t for a,b in zip(controls[i],controls[(i+1)%4])]
+        self.tail(rear+6,90,resting=True)
+        self.leg(chest,shoulder+20,chest+1,98,True)
+        body=path([(rear,87),(rear-4,73,rear+15,72,chest-13,shoulder+7),
+                   (chest-6,shoulder-3,chest-2,shoulder-12,chest+8,shoulder-9),
+                   (chest+23,shoulder-5,chest+21,shoulder+17,chest+15,shoulder+27),
+                   (chest+8,96,rear+24,101,rear+7,96),
+                   (rear-1,95,rear-2,92,rear,87)])
+        chest_shape=path([(chest+3,shoulder-2),(chest+19,shoulder-5,chest+21,shoulder+13,chest+9,shoulder+27),
+                          (chest+3,shoulder+32,chest-4,shoulder+36,chest-6,shoulder+33),
+                          (chest+2,shoulder+18,chest+1,shoulder+9,chest+3,shoulder-2)])
+        self.body(body,chest_shape)
+        hipshape=path([(rear+2,92),(rear-3,72,rear+29,73,rear+31,87),
+                       (rear+32,92,rear+18,92,rear+22,95),
+                       (rear+24,99,rear+4,99,rear+2,92)])
+        self.fill(hipshape,4)
+        if relax:
+            ellipse(self.p,rear+22,88,17*relax,10,self.tan if self.look.coat else self.light)
+            for dx in (0,4,7):
+                ellipse(self.p,rear+28+dx,91,2*relax,2,self.shade)
+        self.leg(chest+13,shoulder+19,chest+14,98)
+        self.head(hx,hy,tilt,front)
+
+    def curled(self, unfold=0):
+        p=self.p
+        p.save()
+        p.translate(0,math.sin(self.phase*1.6)*.6*(1-unfold))
+        def blend(a,b):
+            return tuple(x+(y-x)*unfold for x,y in zip(a,b))
+        body=path([blend((121,84),(123,85)),
+                   blend((125,62,102,51,78,54),(123,77,109,77,86,77)),
+                   blend((51,55,37,69,42,84),(56,77,25,77,25,87)),
+                   blend((47,98,78,98,95,91),(25,97,66,97,100,97)),
+                   blend((81,92,66,86,66,79),(118,97,125,94,123,86)),
+                   blend((68,69,88,73,96,79),(123,85,123,85,123,85)),
+                   blend((104,88,115,94,121,84),(123,85,123,85,123,85))])
+        self.body(body)
+        tail=path([blend((49,84),(15,84)),blend((54,94,75,96,88,89),(20,87,22,89,28,87)),
+                   blend((67,94,55,85,49,84),(25,83,20,81,15,84))])
+        self.fill(tail,5,tone=self.shade)
+        p.save()
+        p.translate(103-3*unfold,78-20*unfold-17*math.sin(math.pi*unfold))
+        p.rotate(155*(1-unfold))
+        p.scale(.68+.32*unfold,.68+.32*unfold)
+        p.translate(-12,-10)
+        previous=self.ear_angle
+        self.ear_angle*=.1+.9*unfold
+        self.head(0,0,sleeping=unfold<.15)
+        self.ear_angle=previous
+        p.restore()
+        p.restore()
+
+
+def draw_dog(p, state, phase, sit_pose=0, wake_progress=0, appearance=None, ear_angle=0):
     p.save()
-    p.translate(x+16, y+20)
-    p.rotate(tilt)
-    p.translate(-16, -20)
-    if front:
-        rounded(p, -7, 8, 13, 32, 6, '#68371f')
-    ellipse(p, 0, 0, 33, 34, '#c17b40')
-    rounded(p, 20-front*7, 16, 27-front*5, 14, 6, '#c17b40')
-    rounded(p, 3, 6, 16, 35, 8, '#68371f')
-    ellipse(p, 40-front*12, 16, 8, 7, '#251f21')
-    if closed:
-        stroke(p, ((24, 14), (29, 14)), '#251f21', 2)
+    p.setPen(Qt.NoPen)
+    appearance = appearance or Appearance()
+    sx,sy=((1,1),(.94,1.10),(1,1),(1,.98))[appearance.style]
+    p.translate(80,98)
+    p.scale(sx,sy)
+    p.translate(-80,-98)
+    artist=Artist(p,appearance,phase,ear_angle)
+    if state=='sit':
+        artist.sitting(sit_pose)
+    elif state=='sleep':
+        artist.curled()
+    elif state=='wake':
+        t=min(1,max(0,wake_progress/.9))
+        artist.curled(t*t*(3-2*t))
     else:
-        ellipse(p, 25-front*2, 11, 4, 5, '#251f21')
-        ellipse(p, 26-front*2, 11.5, 1, 1.5, '#fff6e8')
-        if front:
-            ellipse(p, 16, 10, 3*front, 5, '#251f21')
-    rounded(p, 16, 30, 7, 10, 2, '#42a89c')
+        artist.standing(state)
     p.restore()
-
-
-def draw_sitting(p, pose):
-    # Interpolate anatomical controls, rather than swapping four still frames.
-    controls = [
-        (43, 78, 94, 54, 88, 36, 0, 0, 0),
-        (38, 80, 96, 57, 89, 39, 0, 0, 1),
-        (57, 76, 88, 48, 79, 28, 0, 1, 0),
-        (55, 79, 94, 52, 85, 31, -12, .35, 0),
-    ]
-    i = math.floor(pose) % 4
-    t = pose-math.floor(pose)
-    a, b = controls[i], controls[(i+1) % 4]
-    rear_x, rear_y, chest_x, chest_y, head_x, head_y, tilt, front, relax = [x+(y-x)*t for x,y in zip(a,b)]
-    stroke(p, ((rear_x+8, 93), (rear_x-20, 95)), '#68371f', 6)
-    body = QPainterPath()
-    body.moveTo(rear_x, 88)
-    body.cubicTo(rear_x-3, rear_y-4, chest_x-16, chest_y+18, chest_x-7, chest_y)
-    body.cubicTo(chest_x+1, chest_y-12, chest_x+22, chest_y-4, chest_x+19, chest_y+12)
-    body.lineTo(chest_x+12, 91)
-    body.cubicTo(chest_x-6, 100, rear_x+5, 98, rear_x, 88)
-    p.setBrush(QColor('#a75b2c'))
-    p.drawPath(body)
-    ellipse(p, rear_x-1, rear_y, 35, 98-rear_y, '#a75b2c')
-    rounded(p, chest_x, chest_y+22, 8, 98-(chest_y+22), 4, '#7f421f')
-    rounded(p, chest_x+12, chest_y+19, 8, 98-(chest_y+19), 4, '#c17b40')
-    rounded(p, chest_x+10, 93, 15, 5, 2, '#c17b40')
-    rounded(p, rear_x+11, 92, 20, 6, 3, '#c17b40')
-    if relax > 0:
-        ellipse(p, rear_x+22, 87, 19*relax, 11, '#c17b40')
-        for dx, dy in ((0,0),(5,1),(8,4)):
-            ellipse(p, rear_x+29+dx, 90+dy, 3*relax, 3, '#68371f')
-    draw_head(p, head_x, head_y, tilt, front)
-
-
-def draw_curled(p, phase, unfold=0):
-    breath = math.sin(phase*1.6)*.8*(1-unfold)
-    def point(a,b):
-        return tuple(x+(y-x)*unfold for x,y in zip(a,b))
-    p.save()
-    p.translate(0, breath)
-    # A continuous crescent back, tucked paws, nose toward the belly.
-    body = QPainterPath()
-    body.moveTo(*point((120,85),(123,85)))
-    body.cubicTo(*point((124,65,107,53,82,55),(123,77,109,77,86,77)))
-    body.cubicTo(*point((56,54,38,67,41,82),(56,77,25,77,25,87)))
-    body.cubicTo(*point((42,97,69,97,91,94),(25,97,66,97,100,97)))
-    body.cubicTo(*point((79,91,67,87,66,80),(118,97,125,94,123,86)))
-    body.cubicTo(*point((64,72,76,69,87,74),(123,85,123,85,123,85)))
-    body.cubicTo(*point((100,82,109,92,120,85),(123,85,123,85,123,85)))
-    p.setBrush(QColor('#a75b2c'))
-    p.drawPath(body)
-    stroke(p, (point((51,86),(14,84)), point((80,91),(28,80))), '#7f421f', 8-2*unfold)
-    ellipse(p, *point((75,85,23,7),(99,90,23,8)), '#c17b40')
-    ellipse(p, *point((91,71,29,24),(99,55,33,34)), '#c17b40')
-    rounded(p, *point((77,82,25,11),(119,71,27,14)), 5, '#c17b40')
-    ellipse(p, *point((76,83,7,6),(139,71,8,7)), '#251f21')
-    rounded(p, *point((103,76,13,21),(102,61,16,35)), 6, '#68371f')
-    eye = point((92,80),(124,66))
-    if unfold > .1:
-        ellipse(p, eye[0],eye[1],4,5*min(1,unfold*3),'#251f21')
-    else:
-        stroke(p, (eye,(eye[0]+5,eye[1]+1)), '#251f21', 2)
-    p.restore()
-
-
-def draw_dog(p, state, phase, sit_pose=0, wake_progress=0):
-    if state == 'sit':
-        draw_sitting(p, sit_pose)
-        return
-    if state == 'sleep':
-        draw_curled(p, phase)
-        return
-    if state == 'wake':
-        t = min(1,max(0,wake_progress/.9))
-        draw_curled(p,phase,t*t*(3-2*t))
-        return
-    low = state in ('lie', 'stretch')
-    eating = state == 'eat'
-    bob = math.sin(phase*12)*1.2 if state == 'walk' else 0
-    p.save()
-    # Body is shortened slightly while eating to leave room for the bowl.
-    if eating:
-        p.translate(0, 0)
-        p.scale(.84, 1)
-    p.translate(0, bob)
-    stroke(p, ((28, 80 if low else 74), (14, 84 if low else 58+math.sin(phase*9)*7)), '#5b2e1b', 6)
-    for i, x in enumerate((40,55,99,113)):
-        stride = math.sin(phase*11+i*math.pi)*5 if state == 'walk' else 0
-        rounded(p, x+stride, 90 if low else 82, 10, 8 if low else 16, 4, '#7f421f')
-    if state == 'poop':
-        ellipse(p, 34, 71, 37, 27, '#a75b2c')
-        rounded(p, 52, 60, 70, 30, 13, '#a75b2c')
-    else:
-        rounded(p, 25, 77 if low else 64, 98, 20 if low else 26, 13, '#a75b2c')
-    if eating:
-        # Nose bobs into the food, forepaws remain on the support line.
-        draw_head(p, 116, 59+math.sin(phase*7)*1.5, 26)
-    else:
-        draw_head(p, 99, 55 if low else 49, -6 if state == 'stretch' else 0)
-    p.restore()
-    if eating:
-        rounded(p, 121, 88, 34, 10, 4, '#437d91')
-        ellipse(p, 121, 85, 34, 7, '#e9b867')
-        for x,y in ((129,87),(135,86),(142,88),(148,87)):
-            ellipse(p, x, y, 3, 2, '#81562f')

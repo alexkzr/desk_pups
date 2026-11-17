@@ -841,8 +841,18 @@ class BehaviorTests(unittest.TestCase):
             draw_sleeping(p,artist,422)
             self.assertEqual(head.call_count,1)
             self.assertTrue(head.call_args.kwargs['sleeping'])
-            self.assertEqual(head.call_args.kwargs['tilt'],-22)
+            self.assertEqual(head.call_args.kwargs['tilt'],25)
         p.end()
+
+    def test_belly_up_has_a_solid_abdomen_for_every_coat(self):
+        for coat in range(3 if 'desk_pups' in __file__ else 4):
+            im=QImage(160,112,QImage.Format_ARGB32_Premultiplied)
+            im.fill(Qt.transparent);p=QPainter(im)
+            draw_dog(p,'sleep',0,appearance=Appearance(coat=coat),sleep_elapsed=422)
+            p.end()
+            for x in range(65,81):
+                for y in range(67,85):
+                    self.assertEqual(im.pixelColor(x,y).alpha(),255)
 
 
 if __name__ == '__main__':

@@ -12,7 +12,7 @@ import sys
 import time
 
 from PySide6.QtCore import Qt, QTimer, QPoint
-from PySide6.QtGui import QColor, QPainter, QPen, QIcon, QPixmap, QFont
+from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QIcon, QPixmap, QFont
 from PySide6.QtWidgets import (QApplication, QWidget, QMenu, QSystemTrayIcon,
     QDialog, QFormLayout, QSpinBox, QDialogButtonBox, QMessageBox)
 
@@ -245,22 +245,45 @@ class Pup(QWidget):
             p.translate(160,0)
             p.scale(-1,1)
         low = self.state in ('lie','sleep')
+        sitting = self.state == 'sit'
         bob = math.sin(self.phase*12)*1.7 if self.state == 'walk' else 0
         p.translate(0,bob)
         p.setPen(QPen(QColor('#5b2e1b'),6,Qt.SolidLine,Qt.RoundCap))
         wag = math.sin(self.phase*9)*7
-        p.drawLine(28,74,14,round(58+wag))
+        if sitting:
+            p.drawLine(62,91,37,94)
+        else:
+            p.drawLine(28,74,14,round(58+wag))
         p.setPen(Qt.NoPen)
         p.setBrush(QColor('#7f421f'))
-        for i,x in enumerate((40,55,99,113)):
+        for i,x in enumerate(() if sitting else (40,55,99,113)):
             stride = math.sin(self.phase*11+i*math.pi)*5 if self.state == 'walk' else 0
             p.drawRoundedRect(round(x+stride),82 if not low else 90,10,16 if not low else 8,4,4)
         p.setBrush(QColor('#a75b2c'))
-        if self.state in ('sit','poop'):
+        if sitting:
+            body = QPainterPath()
+            body.moveTo(56,90)
+            body.cubicTo(56,79,72,76,79,67)
+            body.lineTo(94,44)
+            body.cubicTo(103,40,113,47,110,59)
+            body.lineTo(102,90)
+            body.cubicTo(87,98,66,99,56,90)
+            p.drawPath(body)
+            p.drawEllipse(53,77,35,21)
+            p.setBrush(QColor('#7f421f'))
+            p.drawRoundedRect(91,68,9,30,4,4)
+            p.setBrush(QColor('#c17b40'))
+            p.drawRoundedRect(104,65,9,33,4,4)
+            p.drawRoundedRect(98,93,18,5,2,2)
+            p.drawRoundedRect(65,92,21,6,3,3)
+        elif self.state == 'poop':
             p.drawEllipse(34,71,37,27)
             p.drawRoundedRect(52,60,70,30,13,13)
         else:
             p.drawRoundedRect(25,64 if not low else 77,98,26 if not low else 20,13,13)
+        p.save()
+        if sitting:
+            p.translate(-18,-24)
         p.setBrush(QColor('#c17b40'))
         p.drawEllipse(99,49 if not low else 66,33,34)
         p.drawRoundedRect(119,65 if not low else 80,27,14,6,6)
@@ -277,6 +300,7 @@ class Pup(QWidget):
             p.drawEllipse(124,eye_y,4,5)
         p.setBrush(QColor('#42a89c'))
         p.drawRoundedRect(115,78 if not low else 89,7,11 if not low else 6,2,2)
+        p.restore()
         p.restore()
         if self.state == 'eat':
             p.setBrush(QColor('#e9b867'))

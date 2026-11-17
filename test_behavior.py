@@ -52,7 +52,7 @@ class BehaviorTests(unittest.TestCase):
         self.pup.hunger = 71
         self.step()
         self.assertEqual(self.pup.state,'fly_meal')
-        for _ in range(90):
+        for _ in range(115):
             self.step()
         self.assertLess(self.pup.hunger,5)
         self.assertIsNotNone(self.pup.digest_at)
@@ -179,9 +179,15 @@ class BehaviorTests(unittest.TestCase):
         self.assertLess(self.pup.flight_offset,-30)
         self.now=self.pup.flight_started+2.2
         self.pup.tick(self.now)
-        self.assertEqual(self.pup.state,'eat')
+        self.assertEqual(self.pup.state,'hunt_fire')
         self.assertEqual(self.pup.flight_offset,0)
         self.assertIsNotNone(self.pup.flame)
+        self.assertFalse(self.pup.breathe_fire(self.now))
+        self.now=self.pup.deadline
+        self.pup.tick(self.now)
+        self.assertEqual(self.pup.state,'eat')
+        self.assertIsNone(self.pup.flame)
+        self.assertFalse(self.pup.breathe_fire(self.now))
         scene=self.pup.village
         self.assertEqual(scene.eaten_count,0)
         for _ in range(52):self.step()
@@ -348,7 +354,7 @@ class BehaviorTests(unittest.TestCase):
 
     def test_hanging_cursor_pin_lengths_and_joint_limits_under_sharp_moves(self):
         for direction in (1,-1):
-            for point in ((40,65),(78,65),(108,49),(139,45)):
+            for point in ((54,62),(83,56),(108,49),(139,45)):
                 grab=point if direction>0 else (160-point[0],point[1])
                 rig=Suspension(grab,direction)
                 for i in range(45):
@@ -358,10 +364,10 @@ class BehaviorTests(unittest.TestCase):
                     self.assertTrue(all(abs(a)<=limit+1e-8 for a,limit in zip(rig.angles,rig.limits)))
                     bones=rig.bones()
                     for j in (0,2):
-                        self.assertAlmostEqual(math.hypot(bones[j][0]-bones[1][0],bones[j][1]-bones[1][1]),38)
+                        self.assertAlmostEqual(math.hypot(bones[j][0]-bones[1][0],bones[j][1]-bones[1][1]),math.dist(rig.rest[j][:2],rig.rest[1][:2]))
 
     def test_head_and_rump_grabs_let_the_opposite_end_hang_down(self):
-        for grab,target in (((139,45),(40,78)),((40,65),(130,53))):
+        for grab,target in (((139,45),(54,78)),((54,62),(130,53))):
             rig=Suspension(grab)
             for _ in range(90):
                 rig.step(1/30,(200,200))
@@ -448,9 +454,9 @@ class BehaviorTests(unittest.TestCase):
         for direction in (1,-1):
             def mirror(point):
                 return point if direction>0 else (160-point[0],point[1])
-            rig=Suspension(mirror((78,65)),direction)
+            rig=Suspension(mirror((83,56)),direction)
             for _ in range(150):rig.step(1/30,(200,200))
-            for end in ((40,78),(130,53)):
+            for end in ((54,78),(130,53)):
                 self.assertGreater(rig.map(mirror(end))[1],rig.anchor[1]+25)
             self.assertLess(rig.angles[1]*direction,-.4)
             self.assertGreater(rig.angles[2]*direction,.4)
@@ -466,8 +472,8 @@ class BehaviorTests(unittest.TestCase):
             out=QImage(320,320,QImage.Format_ARGB32_Premultiplied)
             out.fill(Qt.transparent)
             p=QPainter(out);draw_hanging(p,blank,rig,look,1);p.end()
-            for x in (43,108,36,111):
-                root=rig.map((x if direction>0 else 160-x,82))
+            for x in (58,108,52,111):
+                root=rig.map((x if direction>0 else 160-x,74))
                 tx,ty=round(root[0]),round(root[1]+13)
                 self.assertTrue(any(out.pixelColor(tx+dx,ty+dy).alpha()
                                     for dx in (-1,0,1) for dy in (-1,0,1)))
@@ -564,6 +570,8 @@ class BehaviorTests(unittest.TestCase):
         self.pup.tick(self.now)
         self.now=self.pup.deadline
         self.pup.tick(self.now)
+        self.now=self.pup.deadline
+        self.pup.tick(self.now)
         self.assertEqual(self.pup.state,'to_bed')
         self.assertIsNotNone(self.pup.bed)
         destination=self.pup.bed_target_x
@@ -621,8 +629,9 @@ class BehaviorTests(unittest.TestCase):
                     draw_dog(p,'walk',.2,appearance=Appearance(0,coat,fur,1),chubby=chubby)
                     p.end();images.append(image)
                 def area(image):
-                    return sum(image.pixelColor(x,y).alpha()>100 for x in range(160) for y in range(112))
-                self.assertGreater(area(images[1]),area(images[0])*1.10)
+                    # Measure the belly, rather than the much larger wings and spines.
+                    return sum(image.pixelColor(x,y).alpha()>100 for x in range(35,126) for y in range(65,98))
+                self.assertGreater(area(images[1]),area(images[0])*1.15)
 
     def test_tail_root_joins_upper_back_instead_of_middle_of_thigh(self):
         for style in range(1):
@@ -709,6 +718,65 @@ class BehaviorTests(unittest.TestCase):
             image=QImage(width,height,QImage.Format_ARGB32_Premultiplied)
             image.fill(Qt.transparent);p=QPainter(image);draw(p);p.end()
             self.assertTrue(any(image.pixelColor(x,height-2).alpha() for x in range(width)))
+
+    def test_fire_ends_before_eating_and_manual_fire_stays_blocked_during_meal(self):
+        self.pup.feed()
+        self.now=self.pup.flight_started+2.2
+        self.pup.tick(self.now)
+        self.assertEqual(self.pup.state,'hunt_fire')
+        effect=self.pup.flame
+        hunger=self.pup.hunger
+        for _ in range(10):self.step()
+        self.assertGreaterEqual(self.pup.hunger,hunger)
+        self.assertEqual(self.pup.village.eaten_count,0)
+        self.assertFalse(self.pup.breathe_fire(self.now))
+        self.now=self.pup.deadline
+        self.pup.tick(self.now)
+        self.assertEqual(self.pup.state,'eat')
+        self.assertFalse(effect.isVisible())
+        self.assertIsNone(self.pup.flame)
+        for _ in range(20):
+            self.assertFalse(self.pup.breathe_fire(self.now))
+            self.step()
+            self.assertIsNone(self.pup.flame)
+        manager=Manager.__new__(Manager)
+        manager.pups=[self.pup]
+        manager.app=self.app
+        menu=manager.menu(self.pup)
+        action=next(a for a in menu.actions() if a.text()=='Выдохнуть огонь')
+        self.assertFalse(action.isEnabled())
+        for _ in range(35):self.step()
+        menu.aboutToShow.emit()
+        self.assertTrue(action.isEnabled())
+        self.assertTrue(self.pup.breathe_fire(self.now))
+        self.pup.feed()
+        self.assertEqual(self.pup.state,'fly_meal')
+        self.assertIsNone(self.pup.flame)
+
+    def test_interrupting_pre_meal_fire_removes_both_scene_and_effect(self):
+        self.pup.feed()
+        self.now=self.pup.flight_started+2.2
+        self.pup.tick(self.now)
+        scene,effect=self.pup.village,self.pup.flame
+        self.pup.start_sleep(self.now)
+        self.assertFalse(scene.isVisible())
+        self.assertFalse(effect.isVisible())
+        self.assertIsNone(self.pup.village)
+        self.assertIsNone(self.pup.flame)
+
+    def test_dragon_has_compact_torso_dorsal_ridge_and_barbed_tail(self):
+        image=QImage(160,112,QImage.Format_ARGB32_Premultiplied)
+        image.fill(Qt.transparent);p=QPainter(image)
+        with patch.object(Artist,'fill',autospec=True) as fill:
+            draw_dog(p,'walk',0,appearance=Appearance())
+            body=next(c.args[1] for c in fill.call_args_list if len(c.args)>2 and c.args[2]==1)
+            self.assertLess(body.boundingRect().width(),90)
+            self.assertGreater(body.boundingRect().height(),40)
+            parts=[c.args[2] for c in fill.call_args_list if len(c.args)>2]
+            self.assertGreaterEqual(parts.count(4),8)
+            self.assertGreaterEqual(parts.count(6),4)
+            self.assertEqual(parts.count(7),1)
+        p.end()
 
 
 if __name__ == '__main__':

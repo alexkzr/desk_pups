@@ -36,7 +36,7 @@ class Village(QWidget):
 
     @property
     def eaten_count(self):
-        return sum(70+i*22-min(self.phase,2.2)*6-self.progress*175<16 for i in range(5))
+        return sum(70+i*22-min(self.phase,4.7)*6-self.progress*175<16 for i in range(5))
 
     def paintEvent(self,event):
         p=QPainter(self);p.setRenderHint(QPainter.Antialiasing)
@@ -54,8 +54,8 @@ class FireBreath(QWidget):
     def advance(self):
         self.phase+=.033
         pet=self.owner
-        mouth_y=90 if pet.state=='eat' else 50
-        mouth_x=140 if pet.state=='eat' else 148
+        mouth_y=90 if pet.state=='hunt_fire' else 50
+        mouth_x=140 if pet.state=='hunt_fire' else 148
         x=pet.xf+(mouth_x if pet.direction>0 else 160-mouth_x-190)
         self.move(round(x),round(pet.yf+pet.flight_offset+mouth_y-35))
         self.update()
@@ -306,14 +306,15 @@ class Pup(QWidget):
         if self.flame:self.flame.close();self.flame=None
         self.flight_offset=0.
 
+    def can_breathe_fire(self):
+        return self.drag is None and self.state in ('walk','sit','lie') and not self.overfeed and not (self.flame and self.flame.isVisible())
+
     def breathe_fire(self,now=None):
         now=time.monotonic() if now is None else now
-        if self.drag is not None or self.state in ('sleep','wake','to_bed','fly_meal','fall','settle') or self.overfeed:
-            return False
-        if self.flame and self.flame.isVisible():return False
+        if not self.can_breathe_fire():return False
         self.next_fire=now+random.uniform(75,150)
         self.flame=FireBreath(self)
-        if self.state!='eat':self.state,self.deadline='fire',now+2.4
+        self.state,self.deadline='fire',now+2.4
         return True
 
     def launch_hunt(self,now=None):
@@ -404,7 +405,7 @@ class Pup(QWidget):
         left,_,right = self.ground()
         if self.anchor:
             _,left,_,right = self.anchor
-        return not self.overfeed and right-left >= 420 and self.energy >= 55 and self.hunger < 45 and self.state not in ('sleep','wake','eat','poop','to_bed','fly_meal','fire') and self.drag is None
+        return not self.overfeed and right-left >= 420 and self.energy >= 55 and self.hunger < 45 and self.state not in ('sleep','wake','eat','poop','to_bed','fly_meal','hunt_fire','fire') and self.drag is None
 
     def start_zoomies(self, now=None):
         now = time.monotonic() if now is None else now
@@ -476,7 +477,7 @@ class Pup(QWidget):
 
     def feed(self):
         if self.drag is None:
-            if self.state=='fly_meal':
+            if self.state in ('fly_meal','hunt_fire'):
                 self.add_extra_food()
                 return
             if self.state=='eat':
@@ -532,9 +533,9 @@ class Pup(QWidget):
             if progress>=1-1e-8:
                 self.flight_offset=0
                 self.anchor=self.flight_anchor
-                self.state='eat';self.meal_started=now
-                self.deadline=now+(.8 if self.overfeed else 5)
-                self.breathe_fire(now)
+                self.state='hunt_fire'
+                self.deadline=now+2.5
+                self.flame=FireBreath(self)
             self.place_normal();self.update();return
         left, floor, right = self.ground()
         previous_x, previous_y = self.xf,self.yf
@@ -610,6 +611,11 @@ class Pup(QWidget):
                     self.feed()
                 elif self.overfeed:
                     self.head_to_bed(now)
+        elif self.state=='hunt_fire':
+            if now>=self.deadline:
+                if self.flame:self.flame.close();self.flame=None
+                self.state='eat';self.meal_started=now
+                self.deadline=now+(.8 if self.overfeed else 5)
         elif self.state == 'eat':
             self.hunger = max(0, self.hunger-dt*24)
             if now >= self.deadline:
@@ -621,7 +627,9 @@ class Pup(QWidget):
                 else:
                     self.start_sitting(now)
         elif self.state=='fire':
-            if now>=self.deadline:self.state,self.deadline='walk',now+8
+            if now>=self.deadline:
+                if self.flame:self.flame.close();self.flame=None
+                self.state,self.deadline='walk',now+8
         elif self.state == 'poop':
             if now >= self.deadline:
                 center = self.xf+rear_drop_offset(self.appearance,self.direction)
@@ -846,7 +854,9 @@ class Manager:
         m.addSeparator()
         m.addAction('Добавить дракона',lambda:self.add())
         m.addAction('Покормить',lambda:[p.feed() for p in ([pup] if pup else self.pups)])
-        m.addAction('Выдохнуть огонь',lambda:[p.breathe_fire() for p in ([pup] if pup else self.pups)])
+        fire_action=m.addAction('Выдохнуть огонь',lambda:[p.breathe_fire() for p in ([pup] if pup else self.pups)])
+        fire_action.setEnabled(any(p.can_breathe_fire() for p in ([pup] if pup else self.pups)))
+        m.aboutToShow.connect(lambda:fire_action.setEnabled(any(p.can_breathe_fire() for p in ([pup] if pup else self.pups))))
         m.addAction('Уложить спать',lambda:self.sleep(pup))
         if pup:
             m.addAction('Внешность…',lambda:self.appearance_dialog(pup))

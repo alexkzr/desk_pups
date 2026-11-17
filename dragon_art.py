@@ -64,9 +64,14 @@ class DragonArtist:
     def tail(self,x,y,running=False,resting=False):
         from artwork import path
         sway=math.sin(self.phase*5)*(4 if running else 2)
-        q=path([(x+5,y),(x-13,y+5,x-17,y-15,2,y-17+sway),
-                (9,y-9,x-12,y+14,x+5,y+9)])
+        q=path([(x+5,y),(x-14,y+5,x-23,y-17,5,y-14+sway),
+                (19,y-8,x-16,y+18,x+5,y+10)])
         self.fill(q,5)
+        # Swept dorsal thorns and a barbed tip, rather than a smooth canine tail.
+        for dx,dy,size in ((-7,3,6),(-17,-2,6),(-27,-9,5),(-36,-13,4)):
+            self.fill(path([(x+dx-2,y+dy+2),(x+dx-5,y+dy-size),(x+dx+4,y+dy+1)]),6,tone=self.horn)
+        self.fill(path([(5,y-14+sway),(1,y-22+sway),(13,y-16+sway),(8,y-9+sway)]),7,tone=self.horn)
+        self.fill(path([(x-20,y+9),(x-24,y+15),(x-13,y+11)]),6,tone=self.horn)
 
     def wing(self,x,y,flight=False,far=False,fold=False):
         from artwork import path,stroke
@@ -118,28 +123,30 @@ class DragonArtist:
         flight=state in ('fly_meal','zoomies');moving=state=='walk' or flight
         t=self.phase*(RUN_FREQUENCY if flight else WALK_FREQUENCY)
         bob=math.sin(t)*.7 if moving else 0
-        self.wing(86,65,flight,True,not flight)
-        self.tail(30,63+bob,flight)
-        for index,x in enumerate((43,109)):
+        self.wing(96,65,flight,True,not flight)
+        self.tail(48,58+bob,flight)
+        for index,x in enumerate((58,109)):
             if state=='hang_body':continue
             dx,lift=foot_cycle(t+index*math.pi+math.pi,flight) if moving else (0,0)
-            self.leg(x,79+bob,x+dx,92 if flight else 98-lift,True)
-        body=path([(28,73),(26,62,38,58,54,61),(72,66,85,61,98,54),
-                   (105,48,106,45,114,45),(126,45,128,58,122,69),
-                   (116,84,109,90,95,90),(72,89,49,89,37,91),(28,91,25,83,28,73)])
+            self.leg(x,74+bob,x+dx,92 if flight else 98-lift,True)
+        body=path([(47,74),(43,63,48,53,63,54),(77,55,87,59,96,50),
+                   (101,43,104,39,112,39),(126,40,130,55,125,68),
+                   (120,82,111,88,101,90),(85,93,69,88,57,88),(49,88,44,82,47,74)])
         if self.chubby:
-            b=QPainterPath();b.addEllipse(QRectF(23,50,101,46));body=body.united(b)
+            b=QPainterPath();b.addEllipse(QRectF(37,44,90,52));body=body.united(b)
         self.fill(body,1)
         chest=path([(110,55),(125,58,123,75,109,87),(102,89),(111,73,112,66,110,55)])
         self.fill(chest,2,tone=self.light)
-        for index,x in enumerate((37,110)):
+        for index,x in enumerate((52,110)):
             if state=='hang_body':continue
             dx,lift=foot_cycle(t+index*math.pi,flight) if moving else (0,0)
-            self.leg(x,79+bob,x+dx,92 if flight else 98-lift)
-        for x,y in ((37,61),(46,61),(56,63),(67,64),(78,61),(88,58),(98,53)):
-            self.fill(path([(x,y+2),(x-2,y-5),(x+5,y+1)]),4,tone=self.horn)
-        self.wing(83,65,flight,False,not flight)
+            self.leg(x,74+bob,x+dx,92 if flight else 98-lift)
+        self.wing(94,65,flight,False,not flight)
+        for x,y,height in ((49,60,7),(57,54,11),(65,55,12),(74,56,15),
+                           (83,55,16),(92,52,14),(101,46,12),(109,40,9)):
+            self.fill(path([(x-3,y+3),(x-4,y-height),(x+6,y+1)]),4,tone=self.horn)
         if state=='eat':self.head(103,63+math.sin(self.phase*9)*.8,25+math.sin(self.phase*8)*2,running=True)
+        elif state=='hunt_fire':self.head(103,63,25,running=True)
         else:self.head(105,36+bob,-4 if flight else self.perch_tilt,running=state=='fire')
 
     def curled(self,unfold=0):
@@ -187,7 +194,7 @@ def village(p,phase,progress=0,direction=1):
         p.setBrush(QColor('#c8a553'));p.drawPath(path([(x-6,85-h),(x+13,85-h-18),(x+33,85-h)]))
         for dx in range(-1,29,4):stroke(p,((x+dx,84-h),(x+13,69-h)),'#8b7137',.5)
     for i in range(5):
-        x=70+i*22-min(phase,2.2)*6-progress*175
+        x=70+i*22-min(phase,4.7)*6-progress*175
         if x<16:continue
         stride=math.sin(phase*17+i)*2
         ellipse(p,x,74,2.6,2.6,'#342d27')

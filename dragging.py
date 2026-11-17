@@ -14,7 +14,7 @@ def rotate(point, angle):
 class Suspension:
     anchor=(160.,120.)
     limits=(1.45,1.05,1.05,.35)
-    grab_points=(('Круп',(40,65)),('Спина',(78,65)),('Холка',(108,49)),('Голова',(139,45)))
+    grab_points=(('Круп',(54,62)),('Спина',(83,56)),('Холка',(108,49)),('Голова',(139,45)))
 
     def __init__(self, grab, direction=1):
         self.grab=tuple(grab)
@@ -22,7 +22,7 @@ class Suspension:
         u=grab[0] if direction>0 else 160-grab[0]
         self.scruff=math.exp(-((u-108)/14)**2-((grab[1]-49)/18)**2)
         self.limits=(1.45,1.05,1.05,.35+.95*self.scruff)
-        self.rest=[(x if direction>0 else 160-x,y) for x,y in ((36.,75.),(74.,75.),(112.,75.),(130.,53.))]
+        self.rest=[(x if direction>0 else 160-x,y) for x,y in ((52.,75.),(83.,75.),(112.,75.),(130.,53.))]
         self.angles=[0.,0.,0.,0.]
         self.speeds=[0.,0.,0.,0.]
         self.limb_angles=[0.,0.,0.,0.]
@@ -36,8 +36,8 @@ class Suspension:
     def bones(self, angles=None):
         theta,rear,front,head=self.angles if angles is None else angles
         mid=self.rest[1]
-        a=rotate((-38*self.direction,0),theta+rear)
-        b=rotate((38*self.direction,0),theta+front)
+        a=rotate((-31*self.direction,0),theta+rear)
+        b=rotate((29*self.direction,0),theta+front)
         neck=rotate((3*self.direction,-12),theta+front)
         skull=rotate((15*self.direction,-10),theta+front+head)
         return [(mid[0]+a[0],mid[1]+a[1],theta+rear),
@@ -47,13 +47,13 @@ class Suspension:
     def raw(self, point, angles=None, bones=None):
         x,y=point
         u=x if self.direction>0 else 160-x
-        if u<=36:
+        if u<=52:
             weights=(1,0,0)
-        elif u<74:
-            t=(u-36)/38
+        elif u<83:
+            t=(u-52)/31
             weights=(1-t,t,0)
         elif u<112:
-            t=(u-74)/38
+            t=(u-83)/29
             weights=(0,1-t,t)
         else:
             weights=(0,0,1)
@@ -80,7 +80,7 @@ class Suspension:
         bones=self.bones(angles)
         gx,gy=self.raw(self.grab,bones=bones)
         energy=0.
-        for x,y,rear_mass,front_mass in ((42,78,.3,.2),(78,78,.4,.25),(111,70,.2,.3),(130,52,.1,.25)):
+        for x,y,rear_mass,front_mass in ((57,78,.3,.2),(83,78,.4,.25),(111,70,.2,.3),(130,52,.1,.25)):
             mass=rear_mass+(front_mass-rear_mass)*self.scruff
             point=(x if self.direction>0 else 160-x,y)
             px,py=self.raw(point,bones=bones)
@@ -160,11 +160,11 @@ def draw_hanging(p, image, rig, appearance, phase, mapping=None, release=0.):
     sx,sy=model_scale(appearance)
     artist=Artist(p,appearance,phase,0)
     def legs(far):
-        for index,x in enumerate((43,108) if far else (36,111)):
+        for index,x in enumerate((58,108) if far else (52,111)):
             source_x=80+(x-80)*sx
             if rig.direction<0:
                 source_x=160-source_x
-            root=mapping((source_x,98+(82-98)*sy))
+            root=mapping((source_x,98+(74-98)*sy))
             limb=index+(0 if far else 2)
             sway=math.degrees(rig.limb_angles[limb])*(1-release)
             p.save()

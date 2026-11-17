@@ -21,7 +21,7 @@ class PreviewTests(unittest.TestCase):
         """
         self.js.evaluate(stub)
         code=Path(__file__).with_name('model-lab.html').read_text(encoding='utf-8').split('<script>')[1].split('</script>')[0]
-        result=self.js.evaluate(code+"\nvar previewTest={frame(st,t){ops=[];state=st;draw(views[0],t);return JSON.stringify(ops);},leg(t){ops=[];leg(c,models[0],0,0,t);return JSON.stringify(ops);},head(st,t){ops=[];neckHead(c,models[0],t,st);return JSON.stringify(ops);}};")
+        result=self.js.evaluate(code+"\nvar previewTest={back(t){return JSON.stringify(sleepOnBack(t));},feet(st,t){let saved=leg,feet=[];leg=function(...args){let prev=ops;ops=[];saved(...args);feet.push(ops);ops=prev;};try{dragon(c,models[0],t,st);}finally{leg=saved;}return JSON.stringify(feet);},frame(st,t){ops=[];state=st;draw(views[0],t);return JSON.stringify(ops);},leg(t){ops=[];leg(c,models[0],0,0,t);return JSON.stringify(ops);},head(st,t){ops=[];neckHead(c,models[0],t,st);return JSON.stringify(ops);}};")
         self.assertFalse(result.isError(),result.toString())
     def call(self,code):
         result=self.js.evaluate(code)
@@ -45,5 +45,16 @@ class PreviewTests(unittest.TestCase):
         self.assertGreater(chew[2],fire[2]+40)
         self.assertGreater(chew[1],fire[1])
         self.assertLess(abs(chew[2]+29),4)
+
+    def test_feeding_and_toilet_keep_all_four_feet_planted(self):
+        for action in ('fire','chew','poop'):
+            a=self.call('previewTest.feet('+json.dumps(action)+',.2)')
+            b=self.call('previewTest.feet('+json.dumps(action)+',1.8)')
+            self.assertEqual(len(a),4)
+            self.assertEqual(a,b)
+    def test_sleep_stays_curled_until_seven_minutes(self):
+        for t in (0,9,12,419,463):
+            self.assertFalse(self.call('previewTest.back('+str(t)+')'))
+        self.assertTrue(self.call('previewTest.back(422)'))
 
 if __name__=='__main__':unittest.main()

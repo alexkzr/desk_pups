@@ -149,7 +149,7 @@ class DragonArtist:
         elif state=='hunt_fire':self.head(103,63,25,running=True)
         else:self.head(105,36+bob,-4 if flight else self.perch_tilt,running=state=='fire')
 
-    def curled(self,unfold=0):
+    def curled(self,unfold=0,show_head=True):
         if unfold>.7:
             self.standing('walk');return
         from artwork import path
@@ -160,7 +160,8 @@ class DragonArtist:
         self.fill(body,1)
         self.fill(path([(45,77),(40,95,85,100,110,85),(92,93,58,91,45,77)]),5,tone=self.shade)
         self.wing(91,76,False,False,True)
-        self.head(86,65,27,sleeping=unfold<.2)
+        if show_head:
+            self.head(86,65,27,sleeping=unfold<.2)
         p.restore()
 
 

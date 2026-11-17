@@ -832,6 +832,18 @@ class BehaviorTests(unittest.TestCase):
         self.pup.wake(self.now)
         self.assertEqual(self.pup.state,'wake')
 
+    def test_back_sleep_head_is_independent_and_eyes_are_closed(self):
+        from sleep_motion import draw_sleeping
+        image=QImage(160,112,QImage.Format_ARGB32_Premultiplied)
+        image.fill(Qt.transparent);p=QPainter(image)
+        artist=Artist(p,Appearance(),0,0)
+        with patch.object(artist,'head',wraps=artist.head) as head:
+            draw_sleeping(p,artist,422)
+            self.assertEqual(head.call_count,1)
+            self.assertTrue(head.call_args.kwargs['sleeping'])
+            self.assertEqual(head.call_args.kwargs['tilt'],-22)
+        p.end()
+
 
 if __name__ == '__main__':
     unittest.main()

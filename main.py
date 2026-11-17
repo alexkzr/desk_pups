@@ -27,11 +27,14 @@ DEFAULT_DROPPING_MINUTES = 180
 
 
 class Village(QWidget):
-    def __init__(self,x,floor,direction):
+    def __init__(self,x,floor,direction,coat=0):
         super().__init__(None,Qt.Tool|Qt.FramelessWindowHint|Qt.WindowStaysOnTopHint|Qt.WindowDoesNotAcceptFocus|Qt.WindowTransparentForInput)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setFixedSize(190,85)
         self.phase,self.progress,self.direction=0.,0.,direction
+        self.coat=coat
+        self.burning=False
+        self.burn_age=0.
         self.move(round(x),round(floor-85));self.show()
 
     @property
@@ -40,7 +43,7 @@ class Village(QWidget):
 
     def paintEvent(self,event):
         p=QPainter(self);p.setRenderHint(QPainter.Antialiasing)
-        draw_village(p,self.phase,self.progress,self.direction)
+        draw_village(p,self.phase,self.progress,self.direction,self.coat,self.burn_age if self.burning else 0)
 
 
 class FireBreath(QWidget):
@@ -337,7 +340,7 @@ class Pup(QWidget):
         self.flight_anchor=anchor
         self.flight_started=now
         self.state='fly_meal'
-        self.village=Village(village_x,floor,self.direction)
+        self.village=Village(village_x,floor,self.direction,self.appearance.coat)
         self.raise_()
 
     def drag_image(self, state='hang_body', factor=1.):
@@ -515,6 +518,8 @@ class Pup(QWidget):
         self.refresh_tooltip()
         if self.village:
             self.village.phase+=dt
+            self.village.coat=self.appearance.coat
+            if self.village.burning:self.village.burn_age+=dt
             if self.state=='eat':self.village.progress=min(1,(now-self.meal_started)/5)
             self.village.update()
         if self.drag is not None:
@@ -536,6 +541,9 @@ class Pup(QWidget):
                 self.state='hunt_fire'
                 self.deadline=now+2.5
                 self.flame=FireBreath(self)
+                if self.village:
+                    self.village.burning=True
+                    self.village.burn_age=.001
             self.place_normal();self.update();return
         left, floor, right = self.ground()
         previous_x, previous_y = self.xf,self.yf

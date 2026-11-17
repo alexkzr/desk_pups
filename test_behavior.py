@@ -779,5 +779,39 @@ class BehaviorTests(unittest.TestCase):
         p.end()
 
 
+    def test_roofs_keep_burning_after_breath_stops(self):
+        self.pup.feed()
+        self.assertFalse(self.pup.village.burning)
+        self.now=self.pup.flight_started+2.2
+        self.pup.tick(self.now)
+        scene=self.pup.village
+        self.assertTrue(scene.burning)
+        age=scene.burn_age
+        self.step()
+        self.assertGreater(scene.burn_age,age)
+        self.now=self.pup.deadline
+        self.pup.tick(self.now)
+        self.assertEqual(self.pup.state,'eat')
+        self.assertIsNone(self.pup.flame)
+        self.assertTrue(scene.burning)
+        self.assertEqual(scene.coat,self.pup.appearance.coat)
+        self.pup.start_sleep(self.now)
+        self.assertIsNone(self.pup.village)
+        self.assertFalse(scene.isVisible())
+
+    def test_flame_and_roof_animation_change_over_time_for_every_color(self):
+        def render(draw):
+            im=QImage(220,160,QImage.Format_ARGB32_Premultiplied)
+            im.fill(Qt.transparent);p=QPainter(im);draw(p);p.end()
+            return bytes(im.constBits())
+        for coat in range(4):
+            self.assertNotEqual(render(lambda p:flame(p,.4,coat)),render(lambda p:flame(p,.8,coat)))
+            unlit=render(lambda p:village(p,1,0,1,coat,0))
+            lit=render(lambda p:village(p,1,0,1,coat,1))
+            later=render(lambda p:village(p,1.3,0,1,coat,1.3))
+            self.assertNotEqual(unlit,lit)
+            self.assertNotEqual(lit,later)
+
+
 if __name__ == '__main__':
     unittest.main()

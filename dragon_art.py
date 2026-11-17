@@ -165,26 +165,93 @@ class DragonArtist:
 
 
 def flame(p,phase,coat,width=190):
-    color=QColor(FIRE_COLORS[coat]);p.save();p.setPen(Qt.NoPen)
-    strength=min(1,phase*4,max(0,(2.4-phase)*3))
+    """Turbulent overlapping tongues with a hot core and dark burning tips."""
+    p.save();p.setPen(Qt.NoPen)
+    strength=min(1,max(0,phase*5),max(0,(2.4-phase)*4))
     p.setOpacity(strength)
-    length=width*(.80+.13*math.sin(phase*19))
-    g=QLinearGradient(0,35,length,35);g.setColorAt(0,QColor('#fff9de'));g.setColorAt(.16,color.lighter(170));g.setColorAt(.6,color);end=QColor(color);end.setAlpha(0);g.setColorAt(1,end)
-    p.setBrush(g)
-    q=QPainterPath(QPointF(0,35))
-    q.cubicTo(35,29,40,3,length,9+math.sin(phase*23)*8)
-    q.cubicTo(length*.7,25,length,23,length,37)
-    q.cubicTo(length*.7,47,length*.85,68,length*.45,54)
-    q.cubicTo(35,46,20,39,0,35)
-    p.drawPath(q)
-    for i in range(11):
-        t=(phase*1.6+i*.11)%1
-        spark=QColor(color.lighter(145));spark.setAlpha(int(210*(1-t)))
-        p.setBrush(spark);p.drawEllipse(QRectF(t*width,33+math.sin(i*8+phase*9)*(5+t*21),2+2*t,1.4+2*t))
+    color=QColor(FIRE_COLORS[coat])
+    hot=QColor('#eafaff' if coat==3 else '#fff4bc')
+    for i in range(4):
+        length=(105+i*23)*(.91+.09*math.sin(phase*17+i*4))
+        tip=35+math.sin(phase*11+i*2.3)*(4+i*3)
+        w=3+i
+        q=QPainterPath(QPointF(0,35))
+        q.cubicTo(length*.20,33-w*.3,length*.42,tip-w,length*.65,tip-w*.55)
+        q.cubicTo(length*.78,tip-w*.9,length*.92,tip+w*.35,length,tip)
+        q.cubicTo(length*.86,tip+w*.85,length*.74,tip+w*1.4,length*.56,35+w*.6)
+        q.cubicTo(length*.27,35+w*.5,length*.10,37,0,35)
+        g=QLinearGradient(0,35,length,35)
+        g.setColorAt(0,hot);g.setColorAt(.13,color.lighter(170))
+        g.setColorAt(.45,color);g.setColorAt(.79,color.darker(140))
+        end=color.darker(220);end.setAlpha(160);g.setColorAt(.97,end)
+        end=QColor(end);end.setAlpha(0);g.setColorAt(1,end)
+        p.setBrush(g);p.drawPath(q)
+    # Advected curls break the outline into separate, rising, pointed flames.
+    # They are born at the mouth and fade at the tip instead of stretching a cone.
+    for layer in range(3):
+        for i in range(9):
+            u=(phase*.9+i/9+layer*.037)%1
+            x=14+u*(width-22)
+            y=35+math.sin(phase*7+i*2.8+layer)*(3+u*7)
+            r=(3+u*9)*(.85+.15*math.sin(phase*13+i))
+            height=r*(1.7+.5*math.sin(phase*9+i*3))
+            tip_x=x+math.sin(phase*12+i)*r*.7+r*.4
+            q=QPainterPath(QPointF(x-r,y+r*.5))
+            q.cubicTo(x-r*1.4,y-r*.5,x+r*.5,y-height*.4,tip_x,y-height)
+            q.cubicTo(x+r*.1,y-height*.2,x+r*1.4,y,x+r*.5,y+r*.7)
+            q.cubicTo(x,y+r,x-r,y+r*.8,x-r,y+r*.5)
+            c=color.lighter(int(150-55*u)) if u<.65 else color.darker(int(110+100*(u-.65)))
+            alpha=int(195*min(1,u/.1,(1-u)/.14))
+            c.setAlpha(max(0,alpha))
+            g=QLinearGradient(x,y+r*.5,tip_x,y-height)
+            g.setColorAt(0,c.lighter(150));g.setColorAt(.5,c)
+            edge=c.darker(160);edge.setAlpha(0);g.setColorAt(1,edge)
+            p.setBrush(g);p.drawPath(q)
+    # Narrow white-hot jets flicker independently inside the broad outer tongues.
+    for i in range(3):
+        length=55+12*i+9*math.sin(phase*21+i*3)
+        tip=35+math.sin(phase*16+i*2)*5
+        q=QPainterPath(QPointF(0,35))
+        q.cubicTo(20,30,35,tip-5,length,tip)
+        q.cubicTo(length*.7,tip+5,22,39,0,35)
+        g=QLinearGradient(0,35,length,tip)
+        g.setColorAt(0,QColor('#ffffff'));g.setColorAt(.35,hot)
+        translucent=QColor(color.lighter(140));translucent.setAlpha(30);g.setColorAt(1,translucent)
+        p.setBrush(g);p.drawPath(q)
+    for i in range(16):
+        t=(phase*1.6+i*.137)%1
+        x=width*(.2+t*.8)
+        y=max(3,min(67,35+math.sin(i*8+phase*5)*(7+t*18)+(i%3-1)*t*7))
+        spark=QColor(color.lighter(180));spark.setAlpha(int(230*(1-t)))
+        p.setPen(QPen(spark,1.1,Qt.SolidLine,Qt.RoundCap))
+        p.drawLine(QPointF(x,y),QPointF(x-3-t*3,y+math.sin(i+phase)))
     p.restore()
 
 
-def village(p,phase,progress=0,direction=1):
+def roof_flames(p,x,base,phase,coat,intensity=1):
+    """Small persistent fires on thatch; no dependency on the breath emitter."""
+    color=QColor(FIRE_COLORS[coat]);hot=QColor('#e6f7ff' if coat==3 else '#fff3bd')
+    p.save();p.setPen(Qt.NoPen);p.setOpacity(min(1,intensity))
+    for i in (-1,0,1):
+        xx=x+i*6
+        height=19+(1-abs(i))*9+math.sin(phase*13+i*3)*4
+        tip=xx+math.sin(phase*11+i*4)*5
+        q=QPainterPath(QPointF(xx-5,base))
+        q.cubicTo(xx-9,base-height*.3,xx+2,base-height*.6,tip,base-height)
+        q.cubicTo(xx+3,base-height*.5,xx+8,base-height*.3,xx+5,base)
+        q.closeSubpath()
+        g=QLinearGradient(xx,base,xx,base-height)
+        g.setColorAt(0,hot);g.setColorAt(.35,color.lighter(135));g.setColorAt(.7,color)
+        edge=color.darker(200);edge.setAlpha(70);g.setColorAt(1,edge)
+        p.setBrush(g);p.drawPath(q)
+    for i in range(3):
+        rise=(phase*16+i*11)%32
+        spark=QColor(color.lighter(160));spark.setAlpha(int(150*(1-rise/32)))
+        p.setBrush(spark);p.drawEllipse(QRectF(x+math.sin(phase*3+i)*10,base-14-rise,1.6,2.2))
+    p.restore()
+
+
+def village(p,phase,progress=0,direction=1,coat=0,burn_age=0):
     from artwork import path,ellipse,stroke
     p.save();p.setPen(Qt.NoPen)
     if direction<0:p.translate(190,0);p.scale(-1,1)
@@ -193,6 +260,11 @@ def village(p,phase,progress=0,direction=1):
         p.setBrush(QColor('#3d3026'));p.drawRect(QRectF(x+10,74,7,11))
         p.setBrush(QColor('#c8a553'));p.drawPath(path([(x-6,85-h),(x+13,85-h-18),(x+33,85-h)]))
         for dx in range(-1,29,4):stroke(p,((x+dx,84-h),(x+13,69-h)),'#8b7137',.5)
+        age=burn_age-i*.2
+        if age>0:
+            p.save();p.setOpacity(min(.65,age*.2));p.setBrush(QColor('#493a30'))
+            p.drawPath(path([(x-6,85-h),(x+13,85-h-18),(x+33,85-h)]));p.restore()
+            roof_flames(p,x+13,85-h-6,phase+i*.7,coat,min(1,age*2))
     for i in range(5):
         x=70+i*22-min(phase,4.7)*6-progress*175
         if x<16:continue

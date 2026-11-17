@@ -24,7 +24,7 @@ def foot_cycle(angle, running=False):
 
 
 def model_scale(appearance):
-    return ((1,1),(.94,1.10),(1,1),(1,.98))[appearance.style]
+    return ((1,1),(.88,1.08),(1,.95),(1.02,.90))[appearance.style]
 
 
 def rear_drop_offset(appearance, direction):
@@ -90,6 +90,7 @@ class Artist:
     def __init__(self, p, appearance, phase, ear_angle, hang_angles=None, guilty=0.):
         self.p, self.look, self.phase, self.ear_angle = p,appearance,phase,ear_angle
         self.hang_angles=hang_angles or (0.,0.,0.)
+        self.ear_rest_angle=0.
         self.guilty=max(0,min(1,(guilty-.05)/.95))
         self.base, self.light, self.shade, self.tan, self.outline = (
             ('#b55b2d','#d47d41','#8a3e24','#e4a465','#67331f'),
@@ -101,16 +102,17 @@ class Artist:
         p = self.p
         bounds = shape.boundingRect()
         base = QColor(tone or self.base)
-        if self.look.style == 3:
+        if self.look.style in (2,3):
             p.setBrush(base)
         else:
             gradient = QLinearGradient(bounds.topLeft(),bounds.bottomRight())
-            gradient.setColorAt(0,base.lighter(125 if self.look.style == 1 else 114))
+            gradient.setColorAt(0,base.lighter(145 if self.look.style == 1 else 114))
             gradient.setColorAt(.5,base)
             gradient.setColorAt(1,base.darker(112))
             p.setBrush(gradient)
-        p.setPen(QPen(QColor(self.outline), .85 if self.look.style == 2 else .35,
-                      Qt.SolidLine,Qt.RoundCap,Qt.RoundJoin) if outline else Qt.NoPen)
+        p.setPen(QPen(QColor(self.outline),1.15 if self.look.style==2 else .25,
+                      Qt.SolidLine,Qt.RoundCap,Qt.RoundJoin)
+                 if outline and self.look.style in (0,2) else Qt.NoPen)
         p.drawPath(shape)
         p.setPen(Qt.NoPen)
         if self.look.coat == 2 and patterned:
@@ -127,7 +129,7 @@ class Artist:
                 p.drawPath(blob)
                 p.restore()
             p.restore()
-        if self.look.style == 2 and self.look.fur:
+        if self.look.style == 2:
             p.save()
             p.setClipPath(shape,Qt.IntersectClip)
             for i in range(6):
@@ -145,8 +147,8 @@ class Artist:
     def tail(self, x, y, running=False, resting=False):
         swing = math.sin(self.phase*(15 if running else 5))* (5 if running else 2)
         if resting:
-            shape = path([(x,y),(x-13,y+3,x-23,y+4,x-28,y+1),
-                          (x-27,y+7,x-12,y+7,x+3,y+4)])
+            shape = path([(x+2,y+2),(x-4,y+10,x-11,94,x-25,94),
+                          (x-22,99,x-4,96,x+3,y+6)])
         else:
             width = 3 if self.look.fur else 0
             shape = path([(x+2,y+2),(x-11,y+1,x-18,y-8,x-19,y-20-swing),
@@ -200,7 +202,9 @@ class Artist:
         p.rotate(tilt)
         p.translate(-10,-12)
         plush = self.look.style == 1
-        scale = 1.10 if plush else (1.03 if self.look.style == 0 else 1)
+        if plush:
+            p.translate(-6,-2)
+        scale = (1.03,1.22,.96,.90)[self.look.style]
         p.scale(scale,scale)
         if front > .15:
             self.ear(16,10,27,7,self.ear_angle*.65-8,True)
@@ -210,6 +214,11 @@ class Artist:
                      (48,8,49,15,42,20),
                      (35,26,27,27,22,28),
                      (17,33,6,32,0,23)])
+        if plush:
+            head=path([(0,24),(-8,11,-2,-7,12,-6),
+                       (24,-7,28,4,29,10),(34,13,38,12,43,10),
+                       (51,8,51,18,43,23),(35,29,26,31,20,31),
+                       (12,35,1,33,0,24)])
         self.fill(head,30)
         # Cheeks and muzzle; tan markings do not recolour the crown or ears.
         p.save()
@@ -235,14 +244,15 @@ class Artist:
             eyelid.quadTo(eye_x+2,eye_y+5,eye_x+5,eye_y+2)
             self.detail(eyelid,'#241c1a',1)
         else:
-            eye_size = 5.4 if plush else (4.7 if self.look.style == 0 else 4)
+            eye_size = (4.7,7.2,3.8,2.9)[self.look.style]
             ellipse(p,eye_x,eye_y,eye_size,eye_size+1,'#241c1a')
             if self.guilty:
                 p.save();p.setOpacity(p.opacity()*self.guilty)
                 ellipse(p,eye_x+.3,eye_y+1,eye_size-.5,eye_size,'#f6e6d2')
                 ellipse(p,eye_x+.8,eye_y-.4*self.guilty,eye_size-1,eye_size-.2,'#241c1a')
                 p.restore()
-            ellipse(p,eye_x+1.2,eye_y+.8-1.2*self.guilty,1.4,1.8,'#fff5e2')
+            if self.look.style!=3 or self.guilty:
+                ellipse(p,eye_x+1.2,eye_y+.8-1.2*self.guilty,1.8 if plush else 1.4,2.2 if plush else 1.8,'#fff5e2')
             if front > .5:
                 ellipse(p,12,8,2.8,4.1,'#241c1a')
                 if self.look.coat:
@@ -260,8 +270,8 @@ class Artist:
                         (39,26,34,28,30,22)])
             self.fill(mouth,33,tone='#623127',patterned=False,outline=False)
             ellipse(p,34,25,6,2.4,'#df8c78')
-        self.ear(4,7,29 if self.look.style != 1 else 31,9 if not plush else 10,
-                 self.ear_angle,False)
+        self.ear(4,7,(29,34,25,26)[self.look.style],(9,12,7,8)[self.look.style],
+                 self.ear_angle+self.ear_rest_angle,False)
         # Long-haired dachshunds have soft ear feathering, not a pointed beard.
         p.restore()
 
@@ -287,6 +297,7 @@ class Artist:
         run=state=='zoomies'
         eating=state=='eat'
         low=state in ('lie','stretch')
+        self.ear_rest_angle=(25 if eating else 45 if low else 0) if self.look.style==1 else 0
         hanging=state in ('hang','hang_body')
         gait=self.phase*(RUN_FREQUENCY if run else WALK_FREQUENCY)
         bob=(-abs(math.sin(gait))*5 if run else math.sin(gait)*.7) if state in ('walk','zoomies') else 0
@@ -294,12 +305,16 @@ class Artist:
         if eating:
             p.scale(.83,1)
         root=82+bob if not low else 90
+        top = (63,59,67,66)[self.look.style]+bob if not low else 71
+        if state=='poop':
+            top-=4
+        tail_x,tail_y=30,top-1
         p.save()
         if hanging:
-            p.translate(28,74)
+            p.translate(tail_x,tail_y)
             p.rotate(-math.degrees(self.hang_angles[0])*.55+math.sin(self.phase*5)*5)
-            p.translate(-28,-74)
-        self.tail(28,72+bob if not low else 86,run,low)
+            p.translate(-tail_x,-tail_y)
+        self.tail(tail_x,tail_y,run,low)
         p.restore()
         for index,x in enumerate((43,108)):
             if state=='hang_body':
@@ -313,10 +328,7 @@ class Artist:
                 self.leg(0,0,0,17,True);p.restore()
             else:
                 self.leg(x,root,foot,98-lift,True)
-        top = (65 if self.look.style == 2 else 63)+bob if not low else 71
         neck = 7 if eating else (10 if low else 24)
-        if state=='poop':
-            top-=4
         body=path([(27,top+10),(25,top-1,37,top-5,53,top-2),
                    (73,top+1,86,top+2,98,top-5),
                    (107,top-min(13,neck),109,top-neck,116,top-neck),
@@ -341,7 +353,7 @@ class Artist:
             else:
                 self.leg(x,root,foot,98-lift)
         if eating:
-            self.head(116,59+math.sin(self.phase*7),27)
+            self.head(116,59+math.sin(self.phase*7)-(5 if self.look.style==1 else 0),27)
         elif low:
             self.head(100,50,-5)
         else:
@@ -361,7 +373,7 @@ class Artist:
         i=math.floor(pose)%4
         t=pose-math.floor(pose)
         rear,hip,chest,shoulder,hx,hy,tilt,front,relax=[a+(b-a)*t for a,b in zip(controls[i],controls[(i+1)%4])]
-        self.tail(rear+6,90,resting=True)
+        self.tail(rear+3,hip-1,resting=True)
         self.leg(chest,shoulder+20,chest+1,98,True)
         body=path([(rear,87),(rear-4,73,rear+15,72,chest-13,shoulder+7),
                    (chest-6,shoulder-3,chest-2,shoulder-12,chest+8,shoulder-9),
@@ -397,8 +409,8 @@ class Artist:
                    blend((68,69,88,73,96,79),(123,85,123,85,123,85)),
                    blend((104,88,115,94,121,84),(123,85,123,85,123,85))])
         self.body(body)
-        tail=path([blend((49,84),(15,84)),blend((54,94,75,96,88,89),(20,87,22,89,28,87)),
-                   blend((67,94,55,85,49,84),(25,83,20,81,15,84))])
+        tail=path([blend((46,72),(33,79)),blend((38,85,57,100,88,89),(16,80,13,87,5,89)),
+                   blend((65,95,50,83,46,72),(14,94,26,88,33,85))])
         self.fill(tail,5,tone=self.shade)
         p.save()
         p.translate(103-3*unfold,78-20*unfold-17*math.sin(math.pi*unfold))

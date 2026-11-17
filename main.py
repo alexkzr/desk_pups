@@ -46,6 +46,24 @@ class Bed(QWidget):
         draw_bed(p, self.opacity)
 
 
+class AppearancePreview(QWidget):
+    def __init__(self, appearance):
+        super().__init__()
+        self.appearance=appearance
+        self.setFixedSize(320,230)
+        self.setObjectName('appearancePreview')
+
+    def paintEvent(self, event):
+        p=QPainter(self)
+        p.fillRect(self.rect(),QColor('#f6f0e6'))
+        p.setRenderHint(QPainter.Antialiasing)
+        p.save();p.scale(2,2)
+        draw_dog(p,'walk',.2,appearance=self.appearance)
+        p.restore()
+        p.setPen(QColor('#59402e'))
+        p.drawText(12,218,STYLES[self.appearance.style])
+
+
 def bounded(value, fallback):
     try:
         value = float(value)
@@ -712,12 +730,21 @@ class Manager:
             box.setCurrentIndex(value)
             form.addRow(title,box)
             boxes.append(box)
+        preview=AppearancePreview(pup.appearance)
+        form.addRow(preview)
+        def refresh_preview():
+            preview.appearance=Appearance(style=boxes[0].currentIndex(),coat=boxes[1].currentIndex(),
+                fur=boxes[2].currentIndex(),seed=pup.appearance.seed)
+            preview.update()
+        for box in boxes:
+            box.currentIndexChanged.connect(refresh_preview)
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(d.accept)
         buttons.rejected.connect(d.reject)
         form.addRow(buttons)
         if d.exec():
-            pup.appearance = Appearance(*(b.currentIndex() for b in boxes),pup.appearance.seed)
+            pup.appearance = preview.appearance
+            pup.refresh_tooltip()
             pup.update()
             self.save()
     def save(self):

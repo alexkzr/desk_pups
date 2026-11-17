@@ -9,10 +9,10 @@ import math
 from unittest.mock import patch
 from types import SimpleNamespace
 from PySide6.QtCore import Qt, QPointF, QTimer
-from PySide6.QtWidgets import QApplication, QSpinBox, QLineEdit, QCheckBox
+from PySide6.QtWidgets import QApplication, QSpinBox, QLineEdit, QCheckBox, QComboBox
 from PySide6.QtGui import QImage, QPainter
-from main import Pup, Manager, Dropping, SLEEP_SECONDS
-from artwork import draw_dog, foot_cycle, WALK_SPEED, RUN_SPEED, WALK_FREQUENCY, RUN_FREQUENCY, model_scale
+from main import Pup, Manager, Dropping, AppearancePreview, SLEEP_SECONDS
+from artwork import Artist, draw_dog, foot_cycle, WALK_SPEED, RUN_SPEED, WALK_FREQUENCY, RUN_FREQUENCY, model_scale
 from shiboken6 import isValid
 from dragging import Suspension, draw_mesh, draw_hanging
 from appearance import Appearance
@@ -502,6 +502,68 @@ class BehaviorTests(unittest.TestCase):
                 p.end();images.append(image)
             self.assertNotEqual(images[0],images[1])
             self.assertEqual(images[0],images[2])
+
+    def test_model_selector_updates_live_preview_applies_and_restores_on_cancel(self):
+        manager=Manager.__new__(Manager)
+        manager.save=lambda:None
+        preview_ids=[]
+        preview_images=[]
+        for style in range(4):
+            def edit():
+                dialog=self.app.activeModalWidget()
+                boxes=dialog.findChildren(QComboBox)
+                boxes[0].setCurrentIndex(style)
+                boxes[1].setCurrentIndex(1)
+                boxes[2].setCurrentIndex(0)
+                preview=dialog.findChild(AppearancePreview)
+                preview_ids.append(preview.appearance.style)
+                image=preview.grab().toImage()
+                preview_images.append(hashlib.sha256(image.constBits()).hexdigest())
+                dialog.accept()
+            QTimer.singleShot(0,edit)
+            manager.appearance_dialog(self.pup)
+            self.assertEqual(self.pup.appearance.style,style)
+            self.assertEqual(self.pup.appearance.coat,1)
+            self.assertEqual(self.pup.appearance.fur,0)
+            self.assertEqual(self.pup.serialize()['appearance']['style'],style)
+        self.assertEqual(preview_ids,[0,1,2,3])
+        self.assertEqual(len(set(preview_images)),4)
+        original=self.pup.appearance
+        def cancel():
+            dialog=self.app.activeModalWidget()
+            dialog.findChildren(QComboBox)[0].setCurrentIndex(0)
+            dialog.reject()
+        QTimer.singleShot(0,cancel)
+        manager.appearance_dialog(self.pup)
+        self.assertEqual(self.pup.appearance,original)
+
+    def test_tail_root_joins_upper_back_instead_of_middle_of_thigh(self):
+        for style in range(4):
+            for state in ('walk','zoomies','poop','hang_body'):
+                image=QImage(160,112,QImage.Format_ARGB32_Premultiplied)
+                image.fill(Qt.transparent)
+                p=QPainter(image)
+                with patch.object(Artist,'tail',autospec=True) as tail, patch.object(Artist,'fill',autospec=True) as fill:
+                    draw_dog(p,state,.4,appearance=Appearance(style,0,0,1))
+                    x,y=tail.call_args.args[1:3]
+                    body=next(call.args[1] for call in fill.call_args_list if len(call.args)>2 and call.args[2]==1)
+                    joint=QPointF(x+2,y+5)
+                    self.assertTrue(body.contains(joint))
+                    top=next(v*.25 for v in range(440) if body.contains(QPointF(joint.x(),v*.25)))
+                    self.assertLessEqual(joint.y()-top,6)
+                p.end()
+
+    def test_larger_models_and_ears_do_not_cross_support_when_eating(self):
+        for style in range(4):
+            for fur in range(2):
+                for phase in (0,.2,.6,.9):
+                    image=QImage(160,112,QImage.Format_ARGB32)
+                    image.fill(Qt.transparent)
+                    p=QPainter(image)
+                    draw_dog(p,'eat',phase,appearance=Appearance(style,0,fur,1))
+                    p.end()
+                    self.assertTrue(all(image.pixelColor(x,y).alpha()<30
+                                        for y in range(99,112) for x in range(160)))
 
 
 if __name__ == '__main__':

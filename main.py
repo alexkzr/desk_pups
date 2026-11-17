@@ -165,6 +165,10 @@ class Pup(QWidget):
         self.setFixedSize(160, 112)
         self.hunger = bounded((saved or {}).get('hunger'), random.uniform(5,25))
         self.energy = bounded((saved or {}).get('energy'), 90)
+        self.overfeed=bounded((saved or {}).get('overfeed'),0)
+        self.fatness=min(1,self.overfeed/65)
+        self.has_eaten=(saved or {}).get('has_eaten',False) is True
+        self.bed_target_x=None
         value = (saved or {}).get('name')
         self.name = value.strip()[:40] if isinstance(value,str) and value.strip() else f'Такса {len(getattr(manager,"pups",[]))+1}'
         self.appearance = Appearance.restore((saved or {}).get('appearance'))
@@ -207,11 +211,41 @@ class Pup(QWidget):
             remaining = 0
         if remaining:
             self.start_sleep(self.last, remaining)
+        elif self.overfeed:
+            self.head_to_bed(self.last)
+
+    @property
+    def fullness(self):
+        return max(0,100-self.hunger+self.overfeed)
+
+    @property
+    def speed_factor(self):
+        return 1-.65*self.fatness
+
+    def head_to_bed(self, now=None):
+        now=time.monotonic() if now is None else now
+        self.clear_bed()
+        left,_,right=self.ground()
+        if self.anchor:
+            _,left,_,right=self.anchor
+        lower,upper=left-4,max(left-4,right-156)
+        self.direction=1 if upper-self.xf>=self.xf-lower else -1
+        self.bed_target_x=max(lower,min(upper,self.xf+self.direction*75))
+        self.bed=Bed()
+        self.bed.move(round(self.bed_target_x+8),round(self.yf+64))
+        self.bed.show();self.raise_()
+        self.state='to_bed'
+        self.deadline=now+30
+
+    def add_extra_food(self):
+        self.overfeed=min(100,self.overfeed+35)
+        self.hunger=0
 
     def clear_bed(self):
         if self.bed:
             self.bed.close()
             self.bed = None
+        self.bed_target_x=None
 
     def drag_image(self, state='hang_body', factor=1.):
         image=QImage(480,336,QImage.Format_ARGB32_Premultiplied)
@@ -224,7 +258,7 @@ class Pup(QWidget):
         rig=self.suspension or self.release_rig
         angles=tuple(b[2]*self.direction*factor for b in rig.bones()) if rig else None
         draw_dog(p,state,self.phase,self.animated_sit_pose(time.monotonic()),0,
-                 self.appearance,self.ear_angle,angles,(rig.scruff*factor if rig else 0.))
+                 self.appearance,self.ear_angle,angles,(rig.scruff*factor if rig else 0.),self.fatness)
         p.end()
         return image
 
@@ -262,13 +296,14 @@ class Pup(QWidget):
     def serialize(self, now=None):
         now = time.monotonic() if now is None else now
         return {'hunger':self.hunger,'energy':self.energy,'name':self.name,
+                'overfeed':self.overfeed,'has_eaten':self.has_eaten,
                 'appearance':self.appearance.serialize(),
                 'sleep_remaining':max(0,self.deadline-now) if self.state == 'sleep' else 0}
 
     def refresh_tooltip(self):
         lines = [self.name] if getattr(self.manager,'show_names',True) else []
         lines += [self.appearance.description,
-                  f'Голод {self.hunger:.0f}% · Энергия {self.energy:.0f}%',
+                  f'Сытость {self.fullness:.0f}% · Энергия {self.energy:.0f}%',
                   'Перетащите мышью · ПКМ — меню']
         self.setToolTip('<qt>'+html.escape('\n'.join(lines)).replace('\n','<br>')+'</qt>')
 
@@ -276,7 +311,7 @@ class Pup(QWidget):
         left,_,right = self.ground()
         if self.anchor:
             _,left,_,right = self.anchor
-        return right-left >= 420 and self.energy >= 55 and self.hunger < 45 and self.state not in ('sleep','wake','eat','poop') and self.drag is None
+        return not self.overfeed and right-left >= 420 and self.energy >= 55 and self.hunger < 45 and self.state not in ('sleep','wake','eat','poop','to_bed') and self.drag is None
 
     def start_zoomies(self, now=None):
         now = time.monotonic() if now is None else now
@@ -313,6 +348,9 @@ class Pup(QWidget):
         now = time.monotonic() if now is None else now
         if self.state not in ('sleep','wake'):
             return
+        if self.state=='sleep' and now>=self.deadline:
+            self.overfeed=0
+            self.fatness=0
         self.awake_until = now+60
         if dragging:
             self.clear_bed()
@@ -344,13 +382,24 @@ class Pup(QWidget):
 
     def feed(self):
         if self.drag is None:
+            if self.state=='eat':
+                self.add_extra_food()
+                self.deadline=min(self.deadline,time.monotonic()+.8)
+                return
+            if self.overfeed and self.state in ('to_bed','sleep','wake'):
+                self.add_extra_food()
+                return
             if self.state in ('sleep','wake'):
+                if self.pending_feed:
+                    self.add_extra_food()
                 self.pending_feed = True
                 if self.state == 'sleep':
                     self.wake()
                 return
+            if self.has_eaten and self.hunger<20:
+                self.add_extra_food()
             self.state = 'eat'
-            self.deadline = time.monotonic()+5
+            self.deadline = time.monotonic()+(.8 if self.overfeed else 5)
 
     def ground(self):
         s = QApplication.screenAt(QPoint(round(self.xf+80),round(self.yf+70))) or QApplication.primaryScreen()
@@ -360,7 +409,10 @@ class Pup(QWidget):
     def tick(self, now):
         dt = min(now-self.last, .1)
         self.last = now
-        self.phase += dt
+        moving=self.state in ('walk','wake','to_bed')
+        self.phase += dt*(14/WALK_SPEED if self.state=='to_bed' else self.speed_factor if moving else 1)
+        target_fat=min(1,self.overfeed/65)
+        self.fatness+=(target_fat-self.fatness)*min(1,dt*5)
         self.animate_ears(dt)
         self.hunger = min(100, self.hunger + dt*100/(self.manager.minutes*60)*(.12 if self.state == 'sleep' else 1))
         self.refresh_tooltip()
@@ -402,6 +454,10 @@ class Pup(QWidget):
         if self.state == 'fall' and (self.anchor or self.yf+98>=floor):
             self.landing_started=now
             self.state,self.deadline='settle',now+.35
+        if self.state=='to_bed' and self.bed:
+            self.bed_target_x+=self.xf-previous_x
+            self.bed_target_x=max(left-4,min(max(left-4,right-156),self.bed_target_x))
+            self.bed.move(round(self.bed_target_x+8),round(self.yf+64))
         # Keep a bed on a moving support while its dog is stepping out.
         if self.bed and self.state == 'wake':
             self.bed.move(self.bed.pos()+QPoint(round(self.xf-previous_x),round(self.yf-previous_y)))
@@ -411,7 +467,17 @@ class Pup(QWidget):
             pass
         elif self.state == 'settle':
             if now >= self.deadline:
-                self.state,self.deadline='walk',now+8
+                if self.overfeed:
+                    self.head_to_bed(now)
+                else:
+                    self.state,self.deadline='walk',now+8
+        elif self.state=='to_bed':
+            distance=self.bed_target_x-self.xf
+            step=min(abs(distance),14*dt)
+            self.direction=1 if distance>=0 else -1
+            self.xf+=self.direction*step
+            if abs(self.bed_target_x-self.xf)<.5:
+                self.start_sleep(now)
         elif self.state == 'sleep':
             self.energy = min(100, self.energy+dt*2)
             if now >= self.deadline:
@@ -419,7 +485,7 @@ class Pup(QWidget):
         elif self.state == 'wake':
             elapsed = now-self.wake_started
             if elapsed > .9:
-                self.xf += self.direction*WALK_SPEED*dt
+                self.xf += self.direction*WALK_SPEED*self.speed_factor*dt
             if self.bed:
                 self.bed.opacity = max(0, min(1, (4.8-elapsed)/.8))
                 self.bed.update()
@@ -429,11 +495,17 @@ class Pup(QWidget):
                 if self.pending_feed:
                     self.pending_feed = False
                     self.feed()
+                elif self.overfeed:
+                    self.head_to_bed(now)
         elif self.state == 'eat':
             self.hunger = max(0, self.hunger-dt*24)
             if now >= self.deadline:
                 self.digest_at = now+random.uniform(45,90)
-                self.start_sitting(now)
+                self.has_eaten=True
+                if self.overfeed:
+                    self.head_to_bed(now)
+                else:
+                    self.start_sitting(now)
         elif self.state == 'poop':
             if now >= self.deadline:
                 center = self.xf+rear_drop_offset(self.appearance,self.direction)
@@ -464,7 +536,7 @@ class Pup(QWidget):
                 elif self.state == 'sit':
                     self.start_sitting(now)
             if self.state == 'walk':
-                self.xf += self.direction*WALK_SPEED*dt
+                self.xf += self.direction*WALK_SPEED*self.speed_factor*dt
         if self.state == 'sit' and self.sit_transition is None and now >= self.next_sit_pose:
             self.sit_transition = now
         lower,upper = left-4,max(left-4,right-156)
@@ -572,12 +644,14 @@ class Pup(QWidget):
             p.translate(160,0)
             p.scale(-1,1)
         state = self.state
+        if state in ('to_bed','fall','settle'):
+            state='walk' if state=='to_bed' else 'sit'
         elapsed = 0
         if state == 'wake':
             elapsed = max(0,time.monotonic()-self.wake_started)
             state = 'wake' if elapsed < .9 else 'walk'
         draw_dog(p, state, self.phase, self.animated_sit_pose(time.monotonic()),elapsed,
-                 self.appearance,self.ear_angle)
+                 self.appearance,self.ear_angle,chubby=self.fatness)
         p.restore()
         if self.state == 'eat':
             p.setPen(QColor('#81562f'))
@@ -792,8 +866,15 @@ def main():
         QTimer.singleShot(1300,lambda:smoke_move(90,-20))
         QTimer.singleShot(1900,lambda:smoke_move(-50,25))
         QTimer.singleShot(2300,pet.end_drag)
+        QTimer.singleShot(2600,pet.feed)
+        QTimer.singleShot(2800,pet.feed)
         QTimer.singleShot(6000,lambda:[p.start_zoomies() for p in manager.pups])
-        QTimer.singleShot(7500,app.quit)
+        def smoke_recover():
+            if pet.overfeed:
+                pet.start_sleep()
+                pet.deadline=time.monotonic()
+        QTimer.singleShot(10000,smoke_recover)
+        QTimer.singleShot(11800,app.quit)
     result = app.exec()
     if mutex:
         ctypes.windll.kernel32.CloseHandle(wintypes.HANDLE(mutex))

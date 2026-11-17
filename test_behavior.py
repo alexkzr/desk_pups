@@ -316,7 +316,7 @@ class BehaviorTests(unittest.TestCase):
             self.manager.show_names=False
             other.refresh_tooltip()
             self.assertNotIn('Бублик',other.toolTip())
-            self.assertIn('Голод',other.toolTip())
+            self.assertIn('Сытость',other.toolTip())
         finally:
             other.close()
 
@@ -542,6 +542,86 @@ class BehaviorTests(unittest.TestCase):
                 self.assertEqual(other.serialize()['appearance']['style'],0)
             finally:
                 other.close()
+
+    def test_single_meal_normal_but_repeat_meals_make_dog_overfull(self):
+        self.pup.feed()
+        self.assertEqual(self.pup.overfeed,0)
+        self.pup.feed()
+        deadline=self.pup.deadline
+        self.assertGreater(self.pup.fullness,100)
+        self.pup.feed()
+        self.assertEqual(self.pup.overfeed,70)
+        self.assertEqual(self.pup.deadline,deadline)
+        for _ in range(100):self.pup.feed()
+        self.assertEqual(self.pup.overfeed,100)
+        self.assertLessEqual(self.pup.fullness,200)
+        self.assertFalse(self.pup.can_zoom())
+
+    def test_overfull_dog_walks_slowly_to_bed_then_recovers_after_full_sleep(self):
+        self.pup.ground=lambda:(0,800,1200)
+        self.pup.xf,self.pup.yf=300,702
+        self.pup.feed();self.pup.feed()
+        self.now=self.pup.deadline
+        self.pup.tick(self.now)
+        self.assertEqual(self.pup.state,'to_bed')
+        self.assertIsNotNone(self.pup.bed)
+        destination=self.pup.bed_target_x
+        before=self.pup.xf
+        for _ in range(10):self.step()
+        self.assertAlmostEqual(abs(self.pup.xf-before),14,places=5)
+        self.assertGreater(self.pup.fatness,.4)
+        self.assertLess(self.pup.speed_factor,1)
+        for _ in range(55):self.step()
+        self.assertEqual(self.pup.state,'sleep')
+        self.assertAlmostEqual(self.pup.xf,destination,delta=.5)
+        self.assertGreater(self.pup.overfeed,0)
+        self.now=self.pup.deadline
+        self.pup.tick(self.now)
+        self.assertEqual(self.pup.state,'wake')
+        self.assertEqual(self.pup.overfeed,0)
+        self.assertEqual(self.pup.fatness,0)
+        self.assertEqual(self.pup.speed_factor,1)
+
+    def test_overfeeding_persists_and_early_waking_does_not_remove_it(self):
+        self.pup.overfeed=70
+        self.pup.has_eaten=True
+        other=Pup(self.manager,self.pup.serialize(self.now))
+        try:
+            self.assertEqual(other.overfeed,70)
+            self.assertEqual(other.state,'to_bed')
+            other.start_sleep(self.now)
+            other.wake(self.now+2)
+            self.assertEqual(other.overfeed,70)
+            other.tick(other.deadline)
+            self.assertEqual(other.state,'to_bed')
+            self.assertFalse(other.can_zoom())
+        finally:
+            other.close()
+
+    def test_feeding_again_while_still_sated_is_counted_and_sleep_requests_accumulate(self):
+        self.pup.has_eaten=True
+        self.pup.hunger=5
+        self.pup.feed()
+        self.assertEqual(self.pup.overfeed,35)
+        self.pup.overfeed=0
+        self.pup.has_eaten=False
+        self.pup.start_sleep(self.now)
+        self.pup.feed();self.pup.feed();self.pup.feed()
+        self.assertEqual(self.pup.overfeed,70)
+        self.assertTrue(self.pup.pending_feed)
+
+    def test_chubby_silhouette_differs_for_every_coat_and_fur(self):
+        for coat in range(3):
+            for fur in range(2):
+                images=[]
+                for chubby in (0,1):
+                    image=QImage(160,112,QImage.Format_ARGB32_Premultiplied)
+                    image.fill(Qt.transparent);p=QPainter(image)
+                    draw_dog(p,'walk',.2,appearance=Appearance(0,coat,fur,1),chubby=chubby)
+                    p.end();images.append(image)
+                def area(image):
+                    return sum(image.pixelColor(x,y).alpha()>100 for x in range(160) for y in range(112))
+                self.assertGreater(area(images[1]),area(images[0])*1.10)
 
     def test_tail_root_joins_upper_back_instead_of_middle_of_thigh(self):
         for style in range(1):

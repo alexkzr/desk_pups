@@ -4,7 +4,7 @@ import random
 from functools import lru_cache
 
 from PySide6.QtCore import QPointF, QRectF, Qt
-from PySide6.QtGui import QColor, QLinearGradient, QPainterPath, QPen
+from PySide6.QtGui import QColor, QLinearGradient, QPainterPath, QPainterPathStroker, QPen
 
 from appearance import Appearance
 
@@ -87,11 +87,12 @@ def spots(seed, part):
 
 
 class Artist:
-    def __init__(self, p, appearance, phase, ear_angle, hang_angles=None, guilty=0.):
+    def __init__(self, p, appearance, phase, ear_angle, hang_angles=None, guilty=0., chubby=0.):
         self.p, self.look, self.phase, self.ear_angle = p,appearance,phase,ear_angle
         self.hang_angles=hang_angles or (0.,0.,0.)
         self.ear_rest_angle=0.
         self.guilty=max(0,min(1,(guilty-.05)/.95))
+        self.chubby=max(0,min(1,chubby))
         self.base, self.light, self.shade, self.tan, self.outline = (
             ('#b55b2d','#d47d41','#8a3e24','#e4a465','#67331f'),
             ('#292831','#4b4650','#171820','#ca803f','#14151c'),
@@ -257,6 +258,12 @@ class Artist:
         p.restore()
 
     def body(self, shape, chest=None):
+        if self.chubby:
+            stroker=QPainterPathStroker()
+            stroker.setWidth(self.chubby*5)
+            shape=shape.united(stroker.createStroke(shape))
+            support=QPainterPath();support.addRect(QRectF(0,0,160,98))
+            shape=shape.intersected(support)
         self.fill(shape,1)
         if chest:
             self.p.save()
@@ -317,6 +324,11 @@ class Artist:
                    (125,top+12,118,top+25,106,top+27),
                    (88,top+28,61,top+25,46,top+27),
                    (31,top+31,25,top+23,27,top+10)])
+        if self.chubby:
+            belly=QPainterPath()
+            belly.addEllipse(QRectF(24-3*self.chubby,59-5*self.chubby+bob,
+                                   100+5*self.chubby,36+6*self.chubby))
+            body=body.united(belly)
         chest=path([(112,top-neck+5),(125,top-neck+4,128,top-6,121,top+10),
                     (118,top+20,112,top+24,106,top+25),
                     (110,top+11,112,top-5,112,top-neck+5)])
@@ -406,7 +418,7 @@ class Artist:
         p.restore()
 
 
-def draw_dog(p, state, phase, sit_pose=0, wake_progress=0, appearance=None, ear_angle=0, hang_angles=None, guilty=0.):
+def draw_dog(p, state, phase, sit_pose=0, wake_progress=0, appearance=None, ear_angle=0, hang_angles=None, guilty=0., chubby=0.):
     p.save()
     p.setPen(Qt.NoPen)
     appearance = appearance or Appearance()
@@ -414,7 +426,7 @@ def draw_dog(p, state, phase, sit_pose=0, wake_progress=0, appearance=None, ear_
     p.translate(80,98)
     p.scale(sx,sy)
     p.translate(-80,-98)
-    artist=Artist(p,appearance,phase,ear_angle,hang_angles,guilty)
+    artist=Artist(p,appearance,phase,ear_angle,hang_angles,guilty,chubby)
     if state=='sit':
         artist.sitting(sit_pose)
     elif state=='sleep':

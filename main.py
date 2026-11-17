@@ -21,7 +21,7 @@ from appearance import Appearance, STYLES, COATS, FURS
 from dragging import Suspension, draw_hanging
 from dragon_art import flame as draw_flame, village as draw_village, dragon_dropping
 
-DATA = Path(os.environ.get('LOCALAPPDATA', str(Path.home()))) / 'Drakarium'
+DATA = Path(os.environ.get('LOCALAPPDATA', str(Path.home()))) / 'DrakariumModelLab'
 SLEEP_SECONDS = 20 * 60
 DEFAULT_DROPPING_MINUTES = 180
 
@@ -216,7 +216,7 @@ class Pup(QWidget):
         self.bed_target_x=None
         value = (saved or {}).get('name')
         self.name = value.strip()[:40] if isinstance(value,str) and value.strip() else f'Дракон {len(getattr(manager,"pups",[]))+1}'
-        self.appearance = Appearance.restore((saved or {}).get('appearance'))
+        self.appearance = Appearance(0,0,0,1729)
         self.ear_angle = 0.
         self.ear_velocity = 0.
         self.next_zoomies = time.monotonic()+random.uniform(90,180)
@@ -819,17 +819,17 @@ class Manager:
         pix.fill(Qt.transparent)
         painter = QPainter(pix)
         painter.scale(.4,.4)
-        draw_dog(painter,'sit',0,appearance=Appearance(0,1,0,1))
+        draw_dog(painter,'sit',0,appearance=Appearance(0,0,0,1729))
         painter.end()
         app.setWindowIcon(QIcon(pix))
         self.tray = QSystemTrayIcon(QIcon(pix),app)
-        self.tray.setToolTip('Дракарий — драконы на рабочем столе')
+        self.tray.setToolTip('Дракарий Lab — один экспериментальный дракон')
         self.tray.setContextMenu(self.menu())
         self.tray.show()
         states = saved.get('pups',[{}])
         if not isinstance(states,list):
             states = [{}]
-        for state in states[:10]:
+        for state in states[:1]:
             self.add(state if isinstance(state,dict) else {})
         if not self.pups:
             self.add()
@@ -845,7 +845,7 @@ class Manager:
         app.aboutToQuit.connect(self.save)
         self.scan_windows()
     def add(self, saved=None):
-        if len(self.pups)<10:
+        if not self.pups:
             self.pups.append(Pup(self,saved))
     def scan_windows(self):
         self.surfaces = window_tops([])
@@ -857,16 +857,14 @@ class Manager:
         self.droppings = [w for w in self.droppings if isValid(w)]
     def menu(self, pup=None):
         m = QMenu()
-        m.addAction('Дракарий • настольные драконы').setEnabled(False)
+        m.addAction('Дракарий Lab • один дракон').setEnabled(False)
         m.addSeparator()
-        m.addAction('Добавить дракона',lambda:self.add())
         m.addAction('Покормить',lambda:[p.feed() for p in ([pup] if pup else self.pups)])
         fire_action=m.addAction('Выдохнуть огонь',lambda:[p.breathe_fire() for p in ([pup] if pup else self.pups)])
         fire_action.setEnabled(any(p.can_breathe_fire() for p in ([pup] if pup else self.pups)))
         m.aboutToShow.connect(lambda:fire_action.setEnabled(any(p.can_breathe_fire() for p in ([pup] if pup else self.pups))))
         m.addAction('Уложить спать',lambda:self.sleep(pup))
         if pup:
-            m.addAction('Внешность…',lambda:self.appearance_dialog(pup))
             zoom = m.addAction('Устроить zoomies!',lambda:pup.start_zoomies())
             zoom.setEnabled(pup.can_zoom())
         m.addAction('Убрать за драконами',self.clean)
@@ -929,34 +927,6 @@ class Manager:
                 if isValid(dropping):
                     dropping.set_lifetime(self.dropping_minutes)
             self.save()
-    def appearance_dialog(self,pup):
-        d = QDialog()
-        d.setWindowTitle('Дракарий · Внешность')
-        form = QFormLayout(d)
-        boxes = []
-        for title,options,value in (('Окрас:',COATS,pup.appearance.coat),):
-            box = QComboBox()
-            box.addItems(options)
-            box.setCurrentIndex(value)
-            form.addRow(title,box)
-            boxes.append(box)
-        preview=AppearancePreview(pup.appearance)
-        form.addRow(preview)
-        def refresh_preview():
-            preview.appearance=Appearance(coat=boxes[0].currentIndex(),
-                fur=0,seed=pup.appearance.seed)
-            preview.update()
-        for box in boxes:
-            box.currentIndexChanged.connect(refresh_preview)
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        buttons.accepted.connect(d.accept)
-        buttons.rejected.connect(d.reject)
-        form.addRow(buttons)
-        if d.exec():
-            pup.appearance = preview.appearance
-            pup.refresh_tooltip()
-            pup.update()
-            self.save()
     def save(self):
         try:
             DATA.mkdir(parents=True,exist_ok=True)
@@ -975,27 +945,21 @@ def main():
     if sys.platform == 'win32' and not args.smoke_test:
         kernel = ctypes.windll.kernel32
         kernel.CreateMutexW.restype = wintypes.HANDLE
-        mutex = kernel.CreateMutexW(None,False,'Local\\DrakariumDesktopPets')
+        mutex = kernel.CreateMutexW(None,False,'Local\\DrakariumModelLabDesktopPets')
         if kernel.GetLastError() == 183:
             return 0
     app = QApplication(sys.argv[:1])
     app.setFont(QFont('Segoe UI',9))
     app.setQuitOnLastWindowClosed(False)
-    app.setApplicationName('Дракарий')
+    app.setApplicationName('Дракарий · мастерская')
     manager = Manager(app)
     if args.smoke_test:
-        while len(manager.pups)<4:
-            manager.add()
-        for i,pup in enumerate(manager.pups):
-            pup.appearance=Appearance(0,i%4,0,1729+i)
-            pup.feed()
         pet=manager.pups[0]
+        pet.feed()
         QTimer.singleShot(3300,pet.feed)
-        QTimer.singleShot(8000,manager.pups[1].start_sleep)
-        QTimer.singleShot(8500,manager.pups[1].wake)
-        QTimer.singleShot(8500,manager.pups[2].breathe_fire)
-        QTimer.singleShot(8500,manager.pups[3].breathe_fire)
-        grabbed=manager.pups[1]
+        QTimer.singleShot(8000,pet.start_sleep)
+        QTimer.singleShot(8500,pet.wake)
+        grabbed=pet
         def smoke_grab():
             offset=QPoint(108 if grabbed.direction>0 else 52,49)
             grabbed.press_offset=offset

@@ -195,11 +195,11 @@ class BehaviorTests(unittest.TestCase):
         self.assertIsNone(self.pup.village)
         self.assertIsNone(self.pup.flame)
 
-    def test_saved_appearance_and_marbling_survive_restart(self):
+    def test_saved_legacy_appearance_resets_to_lab_model(self):
         self.pup.appearance = Appearance(3,2,1,139871)
         other = Pup(self.manager,self.pup.serialize(self.now))
         try:
-            self.assertEqual(other.appearance,self.pup.appearance)
+            self.assertEqual(other.appearance,Appearance(0,0,0,1729))
         finally:
             other.close()
 
@@ -509,44 +509,24 @@ class BehaviorTests(unittest.TestCase):
             self.assertNotEqual(images[0],images[1])
             self.assertEqual(images[0],images[2])
 
-    def test_only_coat_and_fur_choices_remain_and_preview_updates(self):
+    def test_lab_uses_one_fixed_gray_model_and_no_add_or_appearance_menu(self):
+        self.assertEqual(self.pup.appearance,Appearance(0,0,0,1729))
         manager=Manager.__new__(Manager)
-        manager.save=lambda:None
-        observed=[]
-        def edit():
-            dialog=self.app.activeModalWidget()
-            boxes=dialog.findChildren(QComboBox)
-            observed.append(len(boxes))
-            boxes[0].setCurrentIndex(2)
-            preview=dialog.findChild(AppearancePreview)
-            observed.append(preview.appearance)
-            dialog.accept()
-        QTimer.singleShot(0,edit)
-        manager.appearance_dialog(self.pup)
-        self.assertEqual(observed[0],1)
-        self.assertEqual(self.pup.appearance,observed[1])
-        self.assertEqual(self.pup.appearance.style,0)
-        self.assertEqual(self.pup.appearance.coat,2)
-        self.assertEqual(self.pup.appearance.fur,0)
-        original=self.pup.appearance
-        def cancel():
-            dialog=self.app.activeModalWidget()
-            dialog.findChildren(QComboBox)[0].setCurrentIndex(0)
-            dialog.reject()
-        QTimer.singleShot(0,cancel)
-        manager.appearance_dialog(self.pup)
-        self.assertEqual(self.pup.appearance,original)
+        manager.pups=[self.pup];manager.app=self.app
+        manager.add({'appearance':{'coat':3}})
+        self.assertEqual(len(manager.pups),1)
+        menu=manager.menu(self.pup)
+        texts=[a.text() for a in menu.actions()]
+        self.assertNotIn('Добавить дракона',texts)
+        self.assertNotIn('Внешность…',texts)
+        for coat in range(4):
+            other=Pup(self.manager,{'appearance':{'coat':coat}})
+            try:self.assertEqual(other.appearance,Appearance(0,0,0,1729))
+            finally:other.close()
 
-    def test_retired_models_migrate_without_losing_coat_fur_seed_or_name(self):
-        for legacy in (0,1,2,3):
-            saved={'name':'Бублик','appearance':{'style':legacy,'coat':2,'fur':1,'seed':718}}
-            other=Pup(self.manager,saved)
-            try:
-                self.assertEqual(other.appearance,Appearance(0,2,1,718))
-                self.assertEqual(other.name,'Бублик')
-                self.assertEqual(other.serialize()['appearance']['style'],0)
-            finally:
-                other.close()
+    def test_lab_storage_is_separate_from_working_app(self):
+        from main import DATA
+        self.assertEqual(DATA.name,'DrakariumModelLab')
 
     def test_single_meal_normal_but_repeat_meals_make_dog_overfull(self):
         self.pup.feed()

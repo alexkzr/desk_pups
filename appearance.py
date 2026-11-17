@@ -2,7 +2,7 @@
 from dataclasses import asdict, dataclass
 import random
 
-STYLES = ('Мультяшная', 'Плюшевая', 'Рисованная', 'Лаконичная')
+STYLES = ('Мультяшная',)
 COATS = ('Рыжая', 'Чёрно-подпалая', 'Мраморная')
 FURS = ('Гладкая', 'Длинная')
 
@@ -14,16 +14,20 @@ class Appearance:
     fur: int = 0
     seed: int = 1
 
+    def __post_init__(self):
+        # Keep the legacy field readable while migrating every dog to one model.
+        object.__setattr__(self,'style',0)
+
     @classmethod
     def random(cls):
-        return cls(random.randrange(4), random.randrange(3), random.randrange(2),
+        return cls(0, random.randrange(3), random.randrange(2),
                    random.randrange(1, 2**31))
 
     @classmethod
     def restore(cls, value):
         if not isinstance(value, dict):
             return cls.random()
-        limits = {'style': 3, 'coat': 2, 'fur': 1, 'seed': 2**31-1}
+        limits = {'style': 0, 'coat': 2, 'fur': 1, 'seed': 2**31-1}
         values = {}
         for key, maximum in limits.items():
             try:

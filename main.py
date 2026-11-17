@@ -722,8 +722,7 @@ class Manager:
         d.setWindowTitle('Таксон · Внешность')
         form = QFormLayout(d)
         boxes = []
-        for title,options,value in (('Модель:',STYLES,pup.appearance.style),
-                                    ('Окрас:',COATS,pup.appearance.coat),
+        for title,options,value in (('Окрас:',COATS,pup.appearance.coat),
                                     ('Шерсть:',FURS,pup.appearance.fur)):
             box = QComboBox()
             box.addItems(options)
@@ -733,8 +732,8 @@ class Manager:
         preview=AppearancePreview(pup.appearance)
         form.addRow(preview)
         def refresh_preview():
-            preview.appearance=Appearance(style=boxes[0].currentIndex(),coat=boxes[1].currentIndex(),
-                fur=boxes[2].currentIndex(),seed=pup.appearance.seed)
+            preview.appearance=Appearance(coat=boxes[0].currentIndex(),
+                fur=boxes[1].currentIndex(),seed=pup.appearance.seed)
             preview.update()
         for box in boxes:
             box.currentIndexChanged.connect(refresh_preview)

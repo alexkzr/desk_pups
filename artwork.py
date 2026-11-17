@@ -24,7 +24,7 @@ def foot_cycle(angle, running=False):
 
 
 def model_scale(appearance):
-    return ((1,1),(.88,1.08),(1,.95),(1.02,.90))[appearance.style]
+    return (1,1)
 
 
 def rear_drop_offset(appearance, direction):
@@ -102,17 +102,12 @@ class Artist:
         p = self.p
         bounds = shape.boundingRect()
         base = QColor(tone or self.base)
-        if self.look.style in (2,3):
-            p.setBrush(base)
-        else:
-            gradient = QLinearGradient(bounds.topLeft(),bounds.bottomRight())
-            gradient.setColorAt(0,base.lighter(145 if self.look.style == 1 else 114))
-            gradient.setColorAt(.5,base)
-            gradient.setColorAt(1,base.darker(112))
-            p.setBrush(gradient)
-        p.setPen(QPen(QColor(self.outline),1.15 if self.look.style==2 else .25,
-                      Qt.SolidLine,Qt.RoundCap,Qt.RoundJoin)
-                 if outline and self.look.style in (0,2) else Qt.NoPen)
+        gradient=QLinearGradient(bounds.topLeft(),bounds.bottomRight())
+        gradient.setColorAt(0,base.lighter(114))
+        gradient.setColorAt(.5,base)
+        gradient.setColorAt(1,base.darker(112))
+        p.setBrush(gradient)
+        p.setPen(QPen(QColor(self.outline),.25,Qt.SolidLine,Qt.RoundCap,Qt.RoundJoin) if outline else Qt.NoPen)
         p.drawPath(shape)
         p.setPen(Qt.NoPen)
         if self.look.coat == 2 and patterned:
@@ -129,15 +124,6 @@ class Artist:
                 p.drawPath(blob)
                 p.restore()
             p.restore()
-        if self.look.style == 2:
-            p.save()
-            p.setClipPath(shape,Qt.IntersectClip)
-            for i in range(6):
-                x = bounds.x()+bounds.width()*(i+1)/8
-                y = bounds.y()+bounds.height()*.65
-                stroke(p,((x,y),(x+3,y-2)),self.shade,.55)
-            p.restore()
-
     def detail(self, shape, color, width=.7):
         self.p.setBrush(Qt.NoBrush)
         self.p.setPen(QPen(QColor(color),width,Qt.SolidLine,Qt.RoundCap,Qt.RoundJoin))
@@ -184,7 +170,12 @@ class Artist:
         ear = path([(0,0),(-width*.75,2,-width*.65,length*.44,-width*.7,length*.72),
                     (-width*.8,length+3,width*.48,length+4,width*.63,length*.70),
                     (width*.76,length*.38,width*.43,-3,0,0)])
-        self.fill(ear,20 if far else 21,tone=self.shade if far else self.base)
+        self.fill(ear,20 if far else 21,tone=self.shade)
+        self.detail(ear,self.outline if self.look.coat!=1 else '#83717a',.9)
+        # A warm inner panel and rim light separate floppy ears from the torso.
+        inner=QPainterPath(QPointF(-width*.25,7))
+        inner.cubicTo(-width*.45,length*.4,-width*.4,length*.7,-width*.2,length*.83)
+        self.detail(inner,self.light,1.25)
         if self.look.fur:
             for dx in (-2,2):
                 line=QPainterPath(QPointF(dx, length*.40))
@@ -201,11 +192,7 @@ class Artist:
         p.translate(x+10,y+12)
         p.rotate(tilt)
         p.translate(-10,-12)
-        plush = self.look.style == 1
-        if plush:
-            p.translate(-6,-2)
-        scale = (1.03,1.22,.96,.90)[self.look.style]
-        p.scale(scale,scale)
+        p.scale(1.03,1.03)
         if front > .15:
             self.ear(16,10,27,7,self.ear_angle*.65-8,True)
         head = path([(0,23),(-6,11,-1,-3,10,-4),
@@ -214,11 +201,6 @@ class Artist:
                      (48,8,49,15,42,20),
                      (35,26,27,27,22,28),
                      (17,33,6,32,0,23)])
-        if plush:
-            head=path([(0,24),(-8,11,-2,-7,12,-6),
-                       (24,-7,28,4,29,10),(34,13,38,12,43,10),
-                       (51,8,51,18,43,23),(35,29,26,31,20,31),
-                       (12,35,1,33,0,24)])
         self.fill(head,30)
         # Cheeks and muzzle; tan markings do not recolour the crown or ears.
         p.save()
@@ -244,15 +226,14 @@ class Artist:
             eyelid.quadTo(eye_x+2,eye_y+5,eye_x+5,eye_y+2)
             self.detail(eyelid,'#241c1a',1)
         else:
-            eye_size = (4.7,7.2,3.8,2.9)[self.look.style]
+            eye_size = 4.7
             ellipse(p,eye_x,eye_y,eye_size,eye_size+1,'#241c1a')
             if self.guilty:
                 p.save();p.setOpacity(p.opacity()*self.guilty)
                 ellipse(p,eye_x+.3,eye_y+1,eye_size-.5,eye_size,'#f6e6d2')
                 ellipse(p,eye_x+.8,eye_y-.4*self.guilty,eye_size-1,eye_size-.2,'#241c1a')
                 p.restore()
-            if self.look.style!=3 or self.guilty:
-                ellipse(p,eye_x+1.2,eye_y+.8-1.2*self.guilty,1.8 if plush else 1.4,2.2 if plush else 1.8,'#fff5e2')
+            ellipse(p,eye_x+1.2,eye_y+.8-1.2*self.guilty,1.4,1.8,'#fff5e2')
             if front > .5:
                 ellipse(p,12,8,2.8,4.1,'#241c1a')
                 if self.look.coat:
@@ -270,7 +251,7 @@ class Artist:
                         (39,26,34,28,30,22)])
             self.fill(mouth,33,tone='#623127',patterned=False,outline=False)
             ellipse(p,34,25,6,2.4,'#df8c78')
-        self.ear(4,7,(29,34,25,26)[self.look.style],(9,12,7,8)[self.look.style],
+        self.ear(4,7,34,13,
                  self.ear_angle+self.ear_rest_angle,False)
         # Long-haired dachshunds have soft ear feathering, not a pointed beard.
         p.restore()
@@ -297,7 +278,7 @@ class Artist:
         run=state=='zoomies'
         eating=state=='eat'
         low=state in ('lie','stretch')
-        self.ear_rest_angle=(25 if eating else 45 if low else 0) if self.look.style==1 else 0
+        self.ear_rest_angle=32 if eating else 45 if low else 0
         hanging=state in ('hang','hang_body')
         gait=self.phase*(RUN_FREQUENCY if run else WALK_FREQUENCY)
         bob=(-abs(math.sin(gait))*5 if run else math.sin(gait)*.7) if state in ('walk','zoomies') else 0
@@ -305,7 +286,7 @@ class Artist:
         if eating:
             p.scale(.83,1)
         root=82+bob if not low else 90
-        top = (63,59,67,66)[self.look.style]+bob if not low else 71
+        top = 63+bob if not low else 71
         if state=='poop':
             top-=4
         tail_x,tail_y=30,top-1
@@ -353,7 +334,7 @@ class Artist:
             else:
                 self.leg(x,root,foot,98-lift)
         if eating:
-            self.head(116,59+math.sin(self.phase*7)-(5 if self.look.style==1 else 0),27)
+            self.head(116,59+math.sin(self.phase*7),27)
         elif low:
             self.head(100,50,-5)
         else:

@@ -200,18 +200,18 @@ class BehaviorTests(unittest.TestCase):
     def test_old_and_corrupt_appearance_settings_are_supported(self):
         for value in (None,[],{}, {'style':99,'coat':-8,'fur':'oops','seed':None}):
             look=Appearance.restore(value)
-            self.assertIn(look.style,range(4))
+            self.assertIn(look.style,range(1))
             self.assertIn(look.coat,range(3))
             self.assertIn(look.fur,range(2))
 
     def test_new_dogs_randomize_all_four_appearance_fields(self):
-        with patch('appearance.random.randrange',side_effect=[3,2,1,12345]):
-            self.assertEqual(Appearance.random(),Appearance(3,2,1,12345))
+        with patch('appearance.random.randrange',side_effect=[2,1,12345]):
+            self.assertEqual(Appearance.random(),Appearance(0,2,1,12345))
 
-    def test_all_24_looks_are_distinct_and_render_all_poses(self):
+    def test_all_six_looks_are_distinct_and_render_all_poses(self):
         digests=set()
         rng_state=random.getstate()
-        for style in range(4):
+        for style in range(1):
             for coat in range(3):
                 for fur in range(2):
                     look=Appearance(style,coat,fur,7128)
@@ -224,7 +224,7 @@ class BehaviorTests(unittest.TestCase):
                         self.assertTrue(any(image.pixelColor(x,80).alpha() for x in range(160)))
                         if state=='walk':
                             digests.add(hashlib.sha256(image.constBits()).hexdigest())
-        self.assertEqual(len(digests),24)
+        self.assertEqual(len(digests),6)
         self.assertEqual(random.getstate(),rng_state)
 
     def test_zoomies_respect_space_needs_and_stop(self):
@@ -288,7 +288,7 @@ class BehaviorTests(unittest.TestCase):
     def test_dropping_is_behind_rump_in_both_directions_for_every_model(self):
         self.pup.ground=lambda:(0,800,1200)
         self.manager.dropping_minutes=90
-        for style in range(4):
+        for style in range(1):
             centers=[]
             for direction in (1,-1):
                 self.pup.appearance=Appearance(style,1,1,1)
@@ -410,7 +410,7 @@ class BehaviorTests(unittest.TestCase):
     def test_all_coats_can_be_skinned_with_head_and_body_bones(self):
         rig=Suspension((139,45),-1)
         rig.angles=[-.6,-.2,.2,.1]
-        for style in range(4):
+        for style in range(1):
             for coat in range(3):
                 for fur in range(2):
                     image=QImage(160,112,QImage.Format_ARGB32_Premultiplied)
@@ -503,31 +503,26 @@ class BehaviorTests(unittest.TestCase):
             self.assertNotEqual(images[0],images[1])
             self.assertEqual(images[0],images[2])
 
-    def test_model_selector_updates_live_preview_applies_and_restores_on_cancel(self):
+    def test_only_coat_and_fur_choices_remain_and_preview_updates(self):
         manager=Manager.__new__(Manager)
         manager.save=lambda:None
-        preview_ids=[]
-        preview_images=[]
-        for style in range(4):
-            def edit():
-                dialog=self.app.activeModalWidget()
-                boxes=dialog.findChildren(QComboBox)
-                boxes[0].setCurrentIndex(style)
-                boxes[1].setCurrentIndex(1)
-                boxes[2].setCurrentIndex(0)
-                preview=dialog.findChild(AppearancePreview)
-                preview_ids.append(preview.appearance.style)
-                image=preview.grab().toImage()
-                preview_images.append(hashlib.sha256(image.constBits()).hexdigest())
-                dialog.accept()
-            QTimer.singleShot(0,edit)
-            manager.appearance_dialog(self.pup)
-            self.assertEqual(self.pup.appearance.style,style)
-            self.assertEqual(self.pup.appearance.coat,1)
-            self.assertEqual(self.pup.appearance.fur,0)
-            self.assertEqual(self.pup.serialize()['appearance']['style'],style)
-        self.assertEqual(preview_ids,[0,1,2,3])
-        self.assertEqual(len(set(preview_images)),4)
+        observed=[]
+        def edit():
+            dialog=self.app.activeModalWidget()
+            boxes=dialog.findChildren(QComboBox)
+            observed.append(len(boxes))
+            boxes[0].setCurrentIndex(2)
+            boxes[1].setCurrentIndex(1)
+            preview=dialog.findChild(AppearancePreview)
+            observed.append(preview.appearance)
+            dialog.accept()
+        QTimer.singleShot(0,edit)
+        manager.appearance_dialog(self.pup)
+        self.assertEqual(observed[0],2)
+        self.assertEqual(self.pup.appearance,observed[1])
+        self.assertEqual(self.pup.appearance.style,0)
+        self.assertEqual(self.pup.appearance.coat,2)
+        self.assertEqual(self.pup.appearance.fur,1)
         original=self.pup.appearance
         def cancel():
             dialog=self.app.activeModalWidget()
@@ -537,8 +532,19 @@ class BehaviorTests(unittest.TestCase):
         manager.appearance_dialog(self.pup)
         self.assertEqual(self.pup.appearance,original)
 
+    def test_retired_models_migrate_without_losing_coat_fur_seed_or_name(self):
+        for legacy in (0,1,2,3):
+            saved={'name':'Бублик','appearance':{'style':legacy,'coat':2,'fur':1,'seed':718}}
+            other=Pup(self.manager,saved)
+            try:
+                self.assertEqual(other.appearance,Appearance(0,2,1,718))
+                self.assertEqual(other.name,'Бублик')
+                self.assertEqual(other.serialize()['appearance']['style'],0)
+            finally:
+                other.close()
+
     def test_tail_root_joins_upper_back_instead_of_middle_of_thigh(self):
-        for style in range(4):
+        for style in range(1):
             for state in ('walk','zoomies','poop','hang_body'):
                 image=QImage(160,112,QImage.Format_ARGB32_Premultiplied)
                 image.fill(Qt.transparent)
@@ -554,7 +560,7 @@ class BehaviorTests(unittest.TestCase):
                 p.end()
 
     def test_larger_models_and_ears_do_not_cross_support_when_eating(self):
-        for style in range(4):
+        for style in range(1):
             for fur in range(2):
                 for phase in (0,.2,.6,.9):
                     image=QImage(160,112,QImage.Format_ARGB32)

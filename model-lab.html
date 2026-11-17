@@ -21,7 +21,7 @@ function oval(c,x,y,rx,ry,color){c.fillStyle=color;c.beginPath();c.ellipse(x,y,r
 function shade(c,m,x=0,y=-80){let g=c.createLinearGradient(x,y-35,x+25,y+45);g.addColorStop(0,m.light);g.addColorStop(.38,m.base);g.addColorStop(1,m.shade);return g;}
 function claws(c,x,y,m,dir=1){for(let i=0;i<3;i++)path(c,[[x+i*3,y],[x+dir*5+i*3,y+1],[x+dir*2+i*3,y-3]],m.horn);}
 function tail(c,m,t,lift=0){const wave=Math.sin(t*2.2)*7-lift;path(c,[[-39,-69],[-70,-49,-119,-62,-146,-102+wave],[-117,-73+wave,-89,-34,-42,-48]],shade(c,m,-70,-70),m.shade,.8);for(let i=0;i<6;i++){let x=-57-i*13,y=-53-i*2.7+wave*i/8;path(c,[[x,y],[x-8,y-11-i],[x+5,y+3]],m.horn,m.shade,.7);}path(c,[[-146,-102+wave],[-156,-118+wave],[-139,-109+wave],[-136,-98+wave]],m.shade);}
-function leg(c,m,x,y,phase,far=false,tucked=false,front=false){c.save();c.translate(x,y);let knee,foot;if(tucked){knee=[front?-5:15,16];foot=[front?-20:0,20];}else{const q=phase%TAU;const dx=Math.cos(q)*14,up=Math.max(0,Math.sin(q))*13;knee=[dx*.45+(front?-3:9),19];foot=[dx,48*m.leg-up];}path(c,[[-7,-1],[-15,12,knee[0]-9,knee[1]+6,...foot],[foot[0]+14,foot[1]+1],[foot[0]+17,foot[1]-3,foot[0]+7,foot[1]-5,foot[0]+5,foot[1]-7],[knee[0]+10,knee[1]+2,10,8,7,0]],far?m.shade:shade(c,m,0,0),m.shade,.7);claws(c,foot[0]+5,foot[1],m);if(!far)line(c,[[1,6],knee,[foot[0]+2,foot[1]-7]],m.light,.65);c.restore();}
+function leg(c,m,x,y,phase,far=false,tucked=false,front=false){c.save();c.translate(x,y);let knee,foot;if(tucked){knee=[front?-5:15,16];foot=[front?-20:0,20];}else{const q=phase%TAU;const dx=-Math.cos(q)*14,up=Math.max(0,Math.sin(q))*13;knee=[dx*.45+(front?-3:9),19];foot=[dx,48*m.leg-up];}path(c,[[-7,-1],[-15,12,knee[0]-9,knee[1]+6,...foot],[foot[0]+14,foot[1]+1],[foot[0]+17,foot[1]-3,foot[0]+7,foot[1]-5,foot[0]+5,foot[1]-7],[knee[0]+10,knee[1]+2,10,8,7,0]],far?m.shade:shade(c,m,0,0),m.shade,.7);claws(c,foot[0]+5,foot[1],m);if(!far)line(c,[[1,6],knee,[foot[0]+2,foot[1]-7]],m.light,.65);c.restore();}
 function wing(c,m,t,flight=false,far=false,wyvernWalk=false){c.save();c.translate(25,-89);if(far){c.translate(-11,2);c.scale(.88,.9);}let beat=Math.sin(t*4.5);if(flight){c.rotate((-.15+beat*.24)*(far?.85:1));c.scale(m.span, .64+(.36*(beat+1)/2));}else{c.rotate(-.07+Math.sin(t*2)*.018);c.scale(m.span*.69,.74);if(wyvernWalk){c.translate(Math.cos(t*4)*4,Math.max(0,Math.sin(t*4))*3);}}
  const membrane=c.createLinearGradient(-20,-130,-85,0);membrane.addColorStop(0,m.light);membrane.addColorStop(.35,far?m.shade:m.wing);membrane.addColorStop(1,m.shade);
  path(c,[[0,0],[-20,-19,-31,-56,-36,-79],[-42,-111,-64,-134,-82,-142],[-119,-139,-164,-118,-189,-88],[-160,-95,-144,-91,-147,-64],[-122,-77,-103,-65,-109,-36],[-78,-53,-66,-36,-64,-17],[-39,-29,-21,-7,0,0]],membrane,m.shade,1.15);
@@ -31,12 +31,22 @@ function wing(c,m,t,flight=false,far=false,wyvernWalk=false){c.save();c.translat
  // Subtle membrane folds connect fingers, not an opaque triangle.
  for(let i=0;i<5;i++)line(c,[[-50-i*8,-109+i*5],[-53-i*12,-79+i*6,-64-i*17,-40+i*4]],far?m.base:m.shade,.45);
  c.restore();}
-function neckHead(c,m,t,action){c.save();const eating=action==='chew',fire=action==='fire',asleep=action==='sleep';let nx=36,ny=-89,tilt=0;
- if(eating||fire){c.translate(6,18);c.rotate(.37+Math.sin(t*7)*.025);}else if(asleep){c.translate(2,11);c.rotate(.43);}else if(action==='fly'){c.translate(6,5);c.rotate(.14);}else c.translate(0,Math.sin(t*3)*.5);
- const h=45*m.neck;path(c,[[14,-68],[34,-80,34,-104,41,-117-h*.25],[45,-127-h*.2,53,-130-h*.3,62,-128-h*.3],[67,-115,57,-103,61,-84],[66,-72,53,-63,43,-61]],shade(c,m,35,-100),m.shade,.9);
- path(c,[[45,-70],[55,-82,46,-100,52,-117],[56,-119],[52,-103,61,-86,57,-76]],m.horn);for(let i=0;i<5;i++)line(c,[[47+i*.5,-77-i*7],[55,-76-i*7]],m.shade,.6);
- for(let i=0;i<5;i++){let y=-85-i*9;path(c,[[32+i*1.8,y],[24+i*1.5,y-10*m.spike],[38+i*1.8,y-4]],m.horn,m.shade,.65);}
- c.translate(49,-124-h*.3);c.rotate(tilt);path(c,[[-7,13],[-12,1,-4,-10,8,-11],[20,-14,25,-6,29,-2],[38,-1,46,-1,50,4],[53,7,47,12,42,13],[28,15,21,22,9,21],[-1,23,-6,20,-7,13]],shade(c,m,0,0),m.shade,.9);
+function neckHead(c,m,t,action){c.save();const eating=action==='chew',fire=action==='fire',asleep=action==='sleep';
+ let hx=53,hy=-124-13.5*m.neck,tilt=0;
+ if(eating){hx=89+Math.sin(t*3.5)*3;hy=-29+Math.sin(t*7)*3;tilt=.14+Math.sin(t*7)*.035;}
+ else if(fire){hx=65;hy=-87;tilt=.12;}
+ else if(asleep){hx=35;hy=-38;tilt=.42;}
+ else if(action==='fly'){hx=71;hy=-111;tilt=.06;}
+ else hy+=Math.sin(t*3)*.5;
+ // Neck borders stay anchored inside the shoulder and skull in every pose.
+ path(c,[[15,-73],[25,-99,hx-22,hy-23,hx+5,hy-8],
+         [hx+14,hy+6,hx+9,hy+19,hx-2,hy+21],
+         [hx-20,hy+22,48,-47,29,-53]],shade(c,m,35,-90),m.shade,.9);
+ path(c,[[29,-59],[48,-67,hx-12,hy+18,hx+2,hy+12],
+         [hx+7,hy+15],[hx-6,hy+32,45,-50,29,-59]],m.horn);
+ for(let i=0;i<5;i++){let u=(i+1)/6,x=mix(27,hx-9,u),y=mix(-83,hy-8,u);
+   path(c,[[x-4,y+5],[x-11,y-7*m.spike],[x+4,y-1]],m.horn,m.shade,.65);}
+ c.translate(hx,hy);c.rotate(tilt);path(c,[[-7,13],[-12,1,-4,-10,8,-11],[20,-14,25,-6,29,-2],[38,-1,46,-1,50,4],[53,7,47,12,42,13],[28,15,21,22,9,21],[-1,23,-6,20,-7,13]],shade(c,m,0,0),m.shade,.9);
  path(c,[[2,-5],[-5,-12,-19,-15,-27,-24],[-19,-13,-11,-4,-4,0]],m.horn,m.shade,.7);path(c,[[14,-9],[10,-19,-3,-24,-10,-26],[-4,-18,1,-11,7,-5]],m.horn,m.shade,.7);
  path(c,[[20,0],[28,-3,40,1,49,4],[45,10,31,11,20,12]],m.light);
  if(asleep)line(c,[[15,5],[19,8,24,5]],m.shade,1.3);else{path(c,[[14,3],[22,0],[25,4],[17,7]],m.horn);line(c,[[20,2],[20,6]],'#1b2529',1.5);line(c,[[12,0],[25,-2]],m.shade,1.6);}
@@ -54,12 +64,12 @@ function dragon(c,m,t,action){let flight=action==='fly',walk=action==='walk',poo
  c.restore();}
 function hoard(c,m,t){for(let row=0;row<4;row++)for(let i=0;i<11-row*2;i++){let x=-81+row*11+i*14,y=8-row*6;oval(c,x,y,9,3,'#a67a2c');oval(c,x,y-1,8,2.6,'#dfb957');line(c,[[x-3,y-2],[x+3,y-2]],'#ffdfa0',.6);}for(const [x,y,col]of[[-51,0,'#ab526a'],[34,-4,'#6090aa'],[1,-12,'#769e85']])path(c,[[x-5,y],[x,y-8],[x+8,y-3],[x+4,y+3]],col);}
 function sleeping(c,m,t){hoard(c,m,t);c.save();c.translate(0,Math.sin(t*1.7)*.6);const back=(t%18)>9;
- tail(c,m,t);if(back){path(c,[[-57,-45],[-68,-80,-24,-105,20,-89],[65,-75,64,-32,17,-18],[-20,-8,-54,-19,-57,-45]],shade(c,m,-10,-55),m.shade,1);oval(c,-1,-54,39,28,m.horn);for(let i=0;i<4;i++){c.save();c.translate(i<2?-35:27,i%2?-35:-72);c.rotate(i<2?-.6:.5);path(c,[[-4,0],[-15,-11,-7,-20,1,-13],[10,-8,5,-2,0,2],[6,5,-1,10,-4,0]],i%2?m.base:m.shade);c.restore();}c.save();c.translate(3,51);c.scale(.7,.7);neckHead(c,m,t,'sleep');c.restore();}
- else{path(c,[[52,-26],[69,-69,16,-103,-33,-80],[-76,-62,-62,-15,-17,-15],[14,-12,33,-23,35,-34],[8,-14,-21,-27,-17,-46],[-4,-63,32,-28,52,-26]],shade(c,m,-10,-55),m.shade,1);c.save();c.translate(-8,62);c.scale(.64,.64);neckHead(c,m,t,'sleep');c.restore();path(c,[[-50,-40],[-24,-66,18,-56,23,-30],[-6,-40,-8,-19,-24,-24],[-29,-38,-43,-32,-50,-40]],m.wing,m.shade,.8);}
+ tail(c,m,t);if(back){path(c,[[-57,-45],[-68,-80,-24,-105,20,-89],[65,-75,64,-32,17,-18],[-20,-8,-54,-19,-57,-45]],shade(c,m,-10,-55),m.shade,1);oval(c,-1,-54,39,28,m.horn);for(let i=0;i<4;i++){c.save();c.translate(i<2?-35:27,i%2?-35:-72);c.rotate(i<2?-.6:.5);path(c,[[-4,0],[-15,-11,-7,-20,1,-13],[10,-8,5,-2,0,2],[6,5,-1,10,-4,0]],i%2?m.base:m.shade);c.restore();}c.save();c.translate(13,-20);c.scale(.7,.7);neckHead(c,m,t,'sleep');c.restore();}
+ else{path(c,[[52,-26],[69,-69,16,-103,-33,-80],[-76,-62,-62,-15,-17,-15],[14,-12,33,-23,35,-34],[8,-14,-21,-27,-17,-46],[-4,-63,32,-28,52,-26]],shade(c,m,-10,-55),m.shade,1);path(c,[[-50,-40],[-24,-66,18,-56,23,-30],[-6,-40,-8,-19,-24,-24],[-29,-38,-43,-32,-50,-40]],m.wing,m.shade,.8);c.save();c.translate(7,-10);c.scale(.8,.8);neckHead(c,m,t,'sleep');c.restore();}
  c.restore();for(let i=0;i<3;i++){let u=(t*.25+i/3)%1;c.globalAlpha=1-u;c.fillStyle=m.shade;c.font=`${10+u*7}px Georgia`;c.fillText('z',52+u*20,-72-u*42);}c.globalAlpha=1;}
-function flame(c,m,t){c.save();c.translate(113,-99);for(let i=0;i<13;i++){let u=(t*1.6+i/13)%1,x=u*110,y=Math.sin(t*10+i*2)*u*13,r=3+u*12;let g=c.createLinearGradient(0,0,120,0);g.addColorStop(0,'#fff6cf');g.addColorStop(.35,m.fire);g.addColorStop(1,m.shade);c.globalAlpha=(1-u)*.8;path(c,[[x-r,y],[x,y-r*2.5,x+r*.8,y-r,x+r,y],[x+r*.4,y+r,x-r*.8,y+r,x-r,y]],g);}c.restore();c.globalAlpha=1;}
+function flame(c,m,t){c.save();c.translate(114,-77);for(let i=0;i<13;i++){let u=(t*1.6+i/13)%1,x=u*110,y=Math.sin(t*10+i*2)*u*13,r=3+u*12;let g=c.createLinearGradient(0,0,120,0);g.addColorStop(0,'#fff6cf');g.addColorStop(.35,m.fire);g.addColorStop(1,m.shade);c.globalAlpha=(1-u)*.8;path(c,[[x-r,y],[x,y-r*2.5,x+r*.8,y-r,x+r,y],[x+r*.4,y+r,x-r*.8,y+r,x-r,y]],g);}c.restore();c.globalAlpha=1;}
 function village(c,m,t,burning,progress){c.save();c.translate(123,0);for(let i=0;i<3;i++){let x=i*26,y=-25-(i%2)*8;c.fillStyle='#af9168';c.fillRect(x,y,22,-y);path(c,[[x-5,y],[x+10,y-17],[x+28,y]],'#b49d5f');c.fillStyle='#4d3f32';c.fillRect(x+8,-13,6,13);if(burning)for(let j=0;j<3;j++){let h=8+Math.sin(t*10+i*3+j)*4;let g=c.createLinearGradient(0,y,0,y-25);g.addColorStop(0,'#fff5bd');g.addColorStop(.5,m.fire);g.addColorStop(1,m.fire+'30');path(c,[[x+j*7,y],[x+j*7-3,y-h,x+j*7+4,y-h*2,x+j*7+3,y-h*2.7],[x+j*7+11,y-h,x+j*7+8,y,x+j*7,y]],g);}}
- for(let i=0;i<4;i++){let x=8+i*22-progress*100;if(x<-5)continue;let bob=Math.sin(t*18+i)*2;oval(c,x,-11+bob,1.8,1.8,'#4b443a');line(c,[[x,-9+bob],[x,-4],[x+Math.sin(t*18+i)*4,0]],'#4b443a',1.4);line(c,[[x,-4],[x-Math.sin(t*18+i)*4,0]],'#4b443a',1.4);line(c,[[x-3,-8],[x,-6],[x+3,-9]],'#4b443a',1.2);}c.restore();}
+ for(let i=0;i<4;i++){let x=12+i*22-progress*115;if(x<-5)continue;let bob=Math.sin(t*18+i)*2;oval(c,x,-11+bob,1.8,1.8,'#4b443a');line(c,[[x,-9+bob],[x,-4],[x+Math.sin(t*18+i)*4,0]],'#4b443a',1.4);line(c,[[x,-4],[x-Math.sin(t*18+i)*4,0]],'#4b443a',1.4);line(c,[[x-3,-8],[x,-6],[x+3,-9]],'#4b443a',1.2);}c.restore();}
 function dropping(c,x,t){c.save();c.translate(x,0);let grow=clamp(t);c.scale(grow,grow);for(const [x,y,rx,ry]of[[0,-3,10,4],[1,-8,7,5],[2,-13,4,4]])oval(c,x,y,rx,ry,'#73513a');for(const [x,y]of[[-5,-3],[3,-8],[2,-14],[6,-3]])path(c,[[x-2,y],[x,y-2],[x+3,y-1],[x+1,y+2]],'#e7bb54');c.restore();}
 function draw(view,t){let {canvas,m,label}=view,c=canvas.getContext('2d');c.setTransform(2,0,0,2,0,0);c.clearRect(0,0,680,370);c.fillStyle='#eee9df';c.fillRect(0,0,680,370);let act=state,phase=t%10;
  let action=act==='eat'?(phase<2.4?'fire':'chew'):act;

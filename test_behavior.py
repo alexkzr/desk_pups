@@ -5,6 +5,7 @@ import time
 import unittest
 import hashlib
 import random
+import math
 from unittest.mock import patch
 from types import SimpleNamespace
 from PySide6.QtCore import Qt, QPointF, QTimer
@@ -13,6 +14,7 @@ from PySide6.QtGui import QImage, QPainter
 from main import Pup, Manager, Dropping, SLEEP_SECONDS
 from artwork import draw_dog
 from shiboken6 import isValid
+from dragging import Suspension, draw_mesh
 from appearance import Appearance
 
 
@@ -343,6 +345,83 @@ class BehaviorTests(unittest.TestCase):
         self.assertEqual(self.pup.name,'Плюша')
         self.assertEqual(manager.dropping_minutes,240)
         self.assertFalse(manager.show_names)
+
+    def test_hanging_cursor_pin_lengths_and_joint_limits_under_sharp_moves(self):
+        for direction in (1,-1):
+            for point in ((40,65),(78,65),(111,57),(139,45)):
+                grab=point if direction>0 else (160-point[0],point[1])
+                rig=Suspension(grab,direction)
+                for i in range(45):
+                    rig.step(.08,((1 if i%2 else -1)*900,math.sin(i)*500))
+                    self.assertEqual(rig.map(grab),rig.anchor)
+                    self.assertTrue(all(math.isfinite(a) for a in rig.angles+rig.speeds))
+                    self.assertTrue(all(abs(a)<=limit+1e-8 for a,limit in zip(rig.angles,(1.45,.42,.42,.28))))
+                    bones=rig.bones()
+                    for j in (0,2):
+                        self.assertAlmostEqual(math.hypot(bones[j][0]-bones[1][0],bones[j][1]-bones[1][1]),38)
+
+    def test_head_and_rump_grabs_let_the_opposite_end_hang_down(self):
+        for grab,target in (((139,45),(40,78)),((40,65),(130,53))):
+            rig=Suspension(grab)
+            for _ in range(90):
+                rig.step(1/30,(200,200))
+            self.assertGreater(rig.map(target)[1],rig.anchor[1]+35)
+            self.assertLess(abs(rig.angles[3]),.28)
+
+    def test_hanging_swing_damps_after_mouse_stops(self):
+        rig=Suspension((78,65))
+        for i in range(15):
+            rig.step(1/30,(i*20,200))
+        for _ in range(180):
+            rig.step(1/30,(300,200))
+        self.assertLess(sum(abs(v) for v in rig.speeds),.02)
+
+    def test_dragged_grab_point_follows_cursor_and_release_returns_to_normal_canvas(self):
+        self.pup.ground=lambda:(0,800,1200)
+        self.pup.xf,self.pup.yf=300.,200.
+        self.pup.move(300,200)
+        self.pup.press_offset=QPointF(139,45).toPoint()
+        self.pup.begin_drag(QPointF(500,300).toPoint())
+        self.assertEqual(self.pup.width(),320)
+        self.now=self.pup.last+.033
+        self.pup.tick(self.now)
+        px,py=self.pup.suspension.map((139,45))
+        self.assertAlmostEqual(self.pup.x()+px,500)
+        self.assertAlmostEqual(self.pup.y()+py,300)
+        image=self.pup.grab().toImage()
+        self.assertFalse(image.isNull())
+        rig=self.pup.suspension
+        before=(self.pup.x()+rig.map((74,75))[0],self.pup.y()+rig.map((74,75))[1])
+        self.pup.end_drag()
+        after=(self.pup.xf+rig.map((74,75))[0]+self.pup.release_origin[0],
+               self.pup.yf+rig.map((74,75))[1]+self.pup.release_origin[1])
+        self.assertEqual(before,after)
+        self.assertEqual(self.pup.state,'fall')
+        self.assertIsNone(self.pup.anchor)
+        self.now=self.pup.release_started+.4
+        self.pup.tick(self.now)
+        self.assertEqual(self.pup.width(),160)
+        self.assertIsNone(self.pup.release_rig)
+        for _ in range(90):self.step()
+        self.assertAlmostEqual(self.pup.yf+98,800)
+        self.assertNotEqual(self.pup.state,'fall')
+
+    def test_all_coats_can_be_skinned_with_head_and_body_bones(self):
+        rig=Suspension((139,45),-1)
+        rig.angles=[-.6,-.2,.2,.1]
+        for style in range(4):
+            for coat in range(3):
+                for fur in range(2):
+                    image=QImage(160,112,QImage.Format_ARGB32_Premultiplied)
+                    image.fill(Qt.transparent)
+                    p=QPainter(image)
+                    p.translate(160,0);p.scale(-1,1)
+                    draw_dog(p,'hang',1,appearance=Appearance(style,coat,fur,13),hang_angles=(.4,.6,.8,.9))
+                    p.end()
+                    output=QImage(320,320,QImage.Format_ARGB32_Premultiplied)
+                    output.fill(Qt.transparent)
+                    p=QPainter(output);draw_mesh(p,image,rig.map);p.end()
+                    self.assertTrue(any(output.pixelColor(x,150).alpha() for x in range(320)))
 
 
 if __name__ == '__main__':

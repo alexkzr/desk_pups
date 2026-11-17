@@ -13,11 +13,12 @@ import sys
 import time
 
 from PySide6.QtCore import Qt, QTimer, QPoint
-from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QIcon, QPixmap, QFont
+from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QIcon, QPixmap, QFont, QImage
 from PySide6.QtWidgets import (QApplication, QWidget, QMenu, QSystemTrayIcon,
     QDialog, QFormLayout, QSpinBox, QComboBox, QCheckBox, QLineEdit, QDialogButtonBox, QMessageBox)
 from artwork import draw_bed, draw_dog, rear_drop_offset
 from appearance import Appearance, STYLES, COATS, FURS
+from dragging import Suspension, draw_mesh
 
 DATA = Path(os.environ.get('LOCALAPPDATA', str(Path.home()))) / 'Takson'
 SLEEP_SECONDS = 20 * 60
@@ -157,6 +158,14 @@ class Pup(QWidget):
         self.digest_at = None
         self.anchor = None
         self.drag = None
+        self.suspension = None
+        self.drag_cursor = None
+        self.drag_snapshot = None
+        self.release_rig = None
+        self.release_started = 0.
+        self.release_origin = (0.,0.)
+        self.canvas_padding = (0,0)
+        self.landing_started = -10.
         self.press_position = None
         self.press_offset = None
         self.bed = None
@@ -186,6 +195,52 @@ class Pup(QWidget):
             self.bed.close()
             self.bed = None
 
+    def drag_image(self, state='hang', factor=1.):
+        image=QImage(480,336,QImage.Format_ARGB32_Premultiplied)
+        image.fill(Qt.transparent)
+        p=QPainter(image)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.scale(3,3)
+        if self.direction<0:
+            p.translate(160,0);p.scale(-1,1)
+        rig=self.suspension or self.release_rig
+        angles=tuple(b[2]*self.direction*factor for b in rig.bones()) if rig else None
+        draw_dog(p,state,self.phase,self.animated_sit_pose(time.monotonic()),0,
+                 self.appearance,self.ear_angle,angles)
+        p.end()
+        return image
+
+    def begin_drag(self, cursor):
+        self.finish_release()
+        self.drag_snapshot=self.drag_image(self.state)
+        self.wake(dragging=True)
+        self.clear_bed()
+        self.suspension=Suspension((self.press_offset.x(),self.press_offset.y()),self.direction)
+        self.suspension.previous_cursor=(cursor.x(),cursor.y())
+        self.drag=self.press_offset
+        self.anchor=None
+        self.state,self.deadline='walk',time.monotonic()+8
+        self.setFixedSize(320,320)
+        self.place_drag(cursor)
+
+    def place_drag(self, cursor):
+        self.drag_cursor=(float(cursor.x()),float(cursor.y()))
+        x,y=cursor.x()-160,cursor.y()-120
+        self.move(round(x),round(y))
+        center=self.suspension.map(self.suspension.rest[1])
+        rest=self.suspension.rest[1]
+        self.xf,self.yf=x+center[0]-rest[0],y+center[1]-rest[1]
+
+    def finish_release(self):
+        if self.release_rig:
+            self.release_rig=None
+            self.canvas_padding=(0,0)
+            self.setFixedSize(160,112)
+            self.move(round(self.xf),round(self.yf))
+
+    def place_normal(self):
+        self.move(round(self.xf-self.canvas_padding[0]),round(self.yf-self.canvas_padding[1]))
+
     def serialize(self, now=None):
         now = time.monotonic() if now is None else now
         return {'hunger':self.hunger,'energy':self.energy,'name':self.name,
@@ -214,7 +269,8 @@ class Pup(QWidget):
         return True
 
     def animate_ears(self, dt):
-        target = (48+math.sin(self.phase*18)*13 if self.state == 'zoomies' else
+        target = (-math.degrees(self.suspension.bones()[-1][2])*self.direction+math.sin(self.phase*5)*3 if self.suspension else
+                  48+math.sin(self.phase*18)*13 if self.state == 'zoomies' else
                   math.sin(self.phase*8)*9 if self.state == 'walk' else
                   math.sin(self.phase*1.6)*.5 if self.state == 'sleep' else
                   math.sin(self.phase*3)*2)
@@ -279,7 +335,7 @@ class Pup(QWidget):
             self.deadline = time.monotonic()+5
 
     def ground(self):
-        s = QApplication.screenAt(self.geometry().center()) or QApplication.primaryScreen()
+        s = QApplication.screenAt(QPoint(round(self.xf+80),round(self.yf+70))) or QApplication.primaryScreen()
         r = s.availableGeometry()
         return r.left(), r.bottom()+1, r.right()+1
 
@@ -291,8 +347,12 @@ class Pup(QWidget):
         self.hunger = min(100, self.hunger + dt*100/(self.manager.minutes*60)*(.12 if self.state == 'sleep' else 1))
         self.refresh_tooltip()
         if self.drag is not None:
+            self.suspension.step(dt,self.drag_cursor)
+            self.place_drag(QPoint(round(self.drag_cursor[0]),round(self.drag_cursor[1])))
             self.update()
             return
+        if self.release_rig and now-self.release_started >= .35:
+            self.finish_release()
         left, floor, right = self.ground()
         previous_x, previous_y = self.xf,self.yf
         if self.anchor:
@@ -321,12 +381,20 @@ class Pup(QWidget):
                 self.velocity = 0
         elif not self.anchor:
             self.yf = floor-98
+        if self.state == 'fall' and (self.anchor or self.yf+98>=floor):
+            self.landing_started=now
+            self.state,self.deadline='settle',now+.35
         # Keep a bed on a moving support while its dog is stepping out.
         if self.bed and self.state == 'wake':
             self.bed.move(self.bed.pos()+QPoint(round(self.xf-previous_x),round(self.yf-previous_y)))
         if self.bed and self.state == 'sleep':
             self.bed.move(round(self.xf+8),round(self.yf+64))
-        if self.state == 'sleep':
+        if self.state == 'fall':
+            pass
+        elif self.state == 'settle':
+            if now >= self.deadline:
+                self.state,self.deadline='walk',now+8
+        elif self.state == 'sleep':
             self.energy = min(100, self.energy+dt*2)
             if now >= self.deadline:
                 self.wake(now)
@@ -386,11 +454,12 @@ class Pup(QWidget):
         if self.state in ('walk','wake','zoomies') and ((self.xf <= lower and self.direction < 0) or
                                             (self.xf >= upper and self.direction > 0)):
             self.direction *= -1
-        self.move(round(self.xf), round(self.yf))
+        self.place_normal()
         self.update()
 
     def mousePressEvent(self, e):
         if e.button() == Qt.LeftButton:
+            self.finish_release()
             self.press_position = e.globalPosition().toPoint()
             self.press_offset = self.press_position-self.pos()
         elif e.button() == Qt.RightButton:
@@ -399,13 +468,9 @@ class Pup(QWidget):
         if self.press_position is not None and self.drag is None:
             distance = (e.globalPosition().toPoint()-self.press_position).manhattanLength()
             if distance >= QApplication.startDragDistance():
-                self.wake(dragging=True)
-                self.drag = self.press_offset
-                self.anchor = None
+                self.begin_drag(e.globalPosition().toPoint())
         if self.drag is not None:
-            pos = e.globalPosition().toPoint()-self.drag
-            self.xf, self.yf = float(pos.x()), float(pos.y())
-            self.move(pos)
+            self.place_drag(e.globalPosition().toPoint())
     def mouseReleaseEvent(self, e):
         if e.button() != Qt.LeftButton:
             return
@@ -415,7 +480,21 @@ class Pup(QWidget):
             if self.state == 'sleep':
                 self.wake()
             return
+        self.end_drag()
+
+    def end_drag(self):
+        if self.drag is None:
+            return
+        self.press_position=None
+        self.press_offset=None
         self.drag = None
+        self.release_rig=self.suspension
+        self.suspension=None
+        self.release_started=time.monotonic()
+        self.release_origin=(self.x()-self.xf,self.y()-self.yf)
+        self.canvas_padding=(80,100)
+        self.state,self.deadline='fall',self.release_started+1
+        self.place_normal()
         self.velocity = 0
         surfaces = [s for s in self.manager.surfaces if s[1] <= self.xf+80 <= s[3] and abs(s[2]-(self.yf+98)) < 55]
         if surfaces:
@@ -433,6 +512,33 @@ class Pup(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         p.setPen(Qt.NoPen)
+        if self.suspension:
+            image=self.drag_image()
+            t=min(1,self.suspension.elapsed/.2)
+            if self.drag_snapshot is not None and t<1:
+                blend=QPainter(image)
+                blend.setCompositionMode(QPainter.CompositionMode_Source)
+                blend.fillRect(image.rect(),Qt.transparent)
+                blend.setOpacity(1-t);blend.drawImage(0,0,self.drag_snapshot)
+                blend.setCompositionMode(QPainter.CompositionMode_SourceOver)
+                blend.setOpacity(t);blend.drawImage(0,0,self.drag_image())
+                blend.end()
+            draw_mesh(p,image,self.suspension.map)
+            return
+        p.translate(*self.canvas_padding)
+        landing=(time.monotonic()-self.landing_started)/.35
+        if 0<landing<1:
+            squash=math.sin(math.pi*landing)
+            p.translate(80,98);p.scale(1+.09*squash,1-.12*squash);p.translate(-80,-98)
+        if self.release_rig:
+            t=min(1,max(0,(time.monotonic()-self.release_started)/.35))
+            ease=t*t*(3-2*t)
+            def mapping(point):
+                x,y=self.release_rig.map(point)
+                x+=self.release_origin[0];y+=self.release_origin[1]
+                return x*(1-ease)+point[0]*ease,y*(1-ease)+point[1]*ease
+            draw_mesh(p,self.drag_image(factor=1-ease),mapping)
+            return
         if self.state == 'sleep':
             p.setPen(QColor('#57758a'))
             p.drawText(95,25,'z Z z')
@@ -647,6 +753,18 @@ def main():
             pup.feed()
         QTimer.singleShot(300,lambda:[p.start_sleep() for p in manager.pups])
         QTimer.singleShot(600,lambda:[p.wake() for p in manager.pups])
+        pet=manager.pups[0]
+        def smoke_grab():
+            offset=QPoint(139 if pet.direction>0 else 21,45)
+            pet.press_offset=offset
+            pet.begin_drag(QPoint(round(pet.xf),round(pet.yf))+offset)
+        def smoke_move(dx,dy):
+            if pet.drag_cursor:
+                pet.place_drag(QPoint(round(pet.drag_cursor[0]+dx),round(pet.drag_cursor[1]+dy)))
+        QTimer.singleShot(850,smoke_grab)
+        QTimer.singleShot(1300,lambda:smoke_move(90,-20))
+        QTimer.singleShot(1900,lambda:smoke_move(-50,25))
+        QTimer.singleShot(2300,pet.end_drag)
         QTimer.singleShot(6000,lambda:[p.start_zoomies() for p in manager.pups])
         QTimer.singleShot(7500,app.quit)
     result = app.exec()

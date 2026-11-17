@@ -73,8 +73,9 @@ def spots(seed, part):
 
 
 class Artist:
-    def __init__(self, p, appearance, phase, ear_angle):
+    def __init__(self, p, appearance, phase, ear_angle, hang_angles=None):
         self.p, self.look, self.phase, self.ear_angle = p,appearance,phase,ear_angle
+        self.hang_angles=hang_angles or (0.,0.,0.)
         self.base, self.light, self.shade, self.tan, self.outline = (
             ('#b55b2d','#d47d41','#8a3e24','#e4a465','#67331f'),
             ('#292831','#4b4650','#171820','#ca803f','#14151c'),
@@ -262,18 +263,30 @@ class Artist:
         run=state=='zoomies'
         eating=state=='eat'
         low=state in ('lie','stretch')
+        hanging=state=='hang'
         gait=self.phase*(14 if run else 8)
         bob=(-abs(math.sin(gait))*5 if run else math.sin(gait)*.7) if state in ('walk','zoomies') else 0
         p.save()
         if eating:
             p.scale(.83,1)
         root=82+bob if not low else 90
+        p.save()
+        if hanging:
+            p.translate(28,74)
+            p.rotate(-math.degrees(self.hang_angles[0])*.55+math.sin(self.phase*5)*5)
+            p.translate(-28,-74)
         self.tail(28,72+bob if not low else 86,run,low)
+        p.restore()
         for index,x in enumerate((43,108)):
             angle=gait+(index*.6 if run else index*math.pi)+math.pi
             foot=x+math.cos(angle)*(10 if run else 4) if state in ('walk','zoomies') else x
             lift=max(0,math.sin(angle))*(6 if run else 2) if state in ('walk','zoomies') else 0
-            self.leg(x,root,foot,98-lift,True)
+            if hanging:
+                p.save();p.translate(x,root)
+                p.rotate(-math.degrees(self.hang_angles[0 if index==0 else 2])+math.sin(self.phase*6+index)*5)
+                self.leg(0,0,0,17,True);p.restore()
+            else:
+                self.leg(x,root,foot,98-lift,True)
         top = (65 if self.look.style == 2 else 63)+bob if not low else 71
         neck = 7 if eating else (10 if low else 24)
         if state=='poop':
@@ -293,7 +306,12 @@ class Artist:
             angle=gait+(index*.6 if run else index*math.pi)
             foot=x+math.cos(angle)*(10 if run else 4) if state in ('walk','zoomies') else x
             lift=max(0,math.sin(angle))*(6 if run else 2) if state in ('walk','zoomies') else 0
-            self.leg(x,root,foot,98-lift)
+            if hanging:
+                p.save();p.translate(x,root)
+                p.rotate(-math.degrees(self.hang_angles[0 if index==0 else 2])+math.sin(self.phase*6+index+1)*6)
+                self.leg(0,0,0,17);p.restore()
+            else:
+                self.leg(x,root,foot,98-lift)
         if eating:
             self.head(116,59+math.sin(self.phase*7),27)
         elif low:
@@ -367,7 +385,7 @@ class Artist:
         p.restore()
 
 
-def draw_dog(p, state, phase, sit_pose=0, wake_progress=0, appearance=None, ear_angle=0):
+def draw_dog(p, state, phase, sit_pose=0, wake_progress=0, appearance=None, ear_angle=0, hang_angles=None):
     p.save()
     p.setPen(Qt.NoPen)
     appearance = appearance or Appearance()
@@ -375,7 +393,7 @@ def draw_dog(p, state, phase, sit_pose=0, wake_progress=0, appearance=None, ear_
     p.translate(80,98)
     p.scale(sx,sy)
     p.translate(-80,-98)
-    artist=Artist(p,appearance,phase,ear_angle)
+    artist=Artist(p,appearance,phase,ear_angle,hang_angles)
     if state=='sit':
         artist.sitting(sit_pose)
     elif state=='sleep':

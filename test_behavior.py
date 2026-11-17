@@ -11,11 +11,12 @@ from types import SimpleNamespace
 from PySide6.QtCore import Qt, QPointF, QTimer
 from PySide6.QtWidgets import QApplication, QSpinBox, QLineEdit, QCheckBox, QComboBox
 from PySide6.QtGui import QImage, QPainter
-from main import Pup, Manager, Dropping, AppearancePreview, SLEEP_SECONDS
+from main import Pup, Manager, Dropping, AppearancePreview, Village, FireBreath, SLEEP_SECONDS
 from artwork import Artist, draw_dog, foot_cycle, WALK_SPEED, RUN_SPEED, WALK_FREQUENCY, RUN_FREQUENCY, model_scale
 from shiboken6 import isValid
 from dragging import Suspension, draw_mesh, draw_hanging
 from appearance import Appearance
+from dragon_art import FIRE_COLORS, flame, treasure, village
 
 
 class FakeManager:
@@ -50,8 +51,8 @@ class BehaviorTests(unittest.TestCase):
         self.assertGreater(self.pup.hunger,10)
         self.pup.hunger = 71
         self.step()
-        self.assertEqual(self.pup.state,'eat')
-        for _ in range(60):
+        self.assertEqual(self.pup.state,'fly_meal')
+        for _ in range(90):
             self.step()
         self.assertLess(self.pup.hunger,5)
         self.assertIsNotNone(self.pup.digest_at)
@@ -153,7 +154,7 @@ class BehaviorTests(unittest.TestCase):
         self.assertTrue(self.pup.pending_feed)
         self.now = self.pup.deadline
         self.pup.tick(self.now)
-        self.assertEqual(self.pup.state,'eat')
+        self.assertEqual(self.pup.state,'fly_meal')
         self.assertIsNone(self.pup.bed)
 
     def test_four_sitting_poses_cycle_with_smooth_transition(self):
@@ -167,27 +168,26 @@ class BehaviorTests(unittest.TestCase):
             self.pup.animated_sit_pose(self.now+.81)
             self.assertEqual(self.pup.sit_pose,expected)
 
-    def test_bowl_is_on_support_and_mirrors_with_dog(self):
-        def render(left):
-            image = QImage(160,112,QImage.Format_ARGB32)
-            image.fill(Qt.transparent)
-            painter = QPainter(image)
-            if left:
-                painter.translate(160,0)
-                painter.scale(-1,1)
-            draw_dog(painter,'eat',0)
-            painter.end()
-            return image
-        right,left = render(False),render(True)
-        self.assertGreater(right.pixelColor(130,97).alpha(),0)
-        self.assertGreater(left.pixelColor(29,97).alpha(),0)
-        for image in (right,left):
-            self.assertTrue(all(image.pixelColor(x,y).alpha()==0
-                                for y in range(99,112) for x in range(160)))
-        # Compare the prop, not floating-point gradient rounding on the dog.
-        for x in range(5,40):
-            for y in range(85,99):
-                self.assertEqual(right.pixelColor(159-x,y),left.pixelColor(x,y))
+    def test_hunt_flies_to_village_with_fleeing_people_and_cleans_up(self):
+        self.pup.ground=lambda:(0,800,1200)
+        self.pup.xf,self.pup.yf=300,702
+        self.pup.feed()
+        self.assertEqual(self.pup.state,'fly_meal')
+        self.assertIsNotNone(self.pup.village)
+        self.now=self.pup.flight_started+1.1
+        self.pup.tick(self.now)
+        self.assertLess(self.pup.flight_offset,-30)
+        self.now=self.pup.flight_started+2.2
+        self.pup.tick(self.now)
+        self.assertEqual(self.pup.state,'eat')
+        self.assertEqual(self.pup.flight_offset,0)
+        self.assertIsNotNone(self.pup.flame)
+        scene=self.pup.village
+        self.assertEqual(scene.eaten_count,0)
+        for _ in range(52):self.step()
+        self.assertEqual(scene.eaten_count,5)
+        self.assertIsNone(self.pup.village)
+        self.assertIsNone(self.pup.flame)
 
     def test_saved_appearance_and_marbling_survive_restart(self):
         self.pup.appearance = Appearance(3,2,1,139871)
@@ -201,19 +201,19 @@ class BehaviorTests(unittest.TestCase):
         for value in (None,[],{}, {'style':99,'coat':-8,'fur':'oops','seed':None}):
             look=Appearance.restore(value)
             self.assertIn(look.style,range(1))
-            self.assertIn(look.coat,range(3))
+            self.assertIn(look.coat,range(4))
             self.assertIn(look.fur,range(2))
 
     def test_new_dogs_randomize_all_four_appearance_fields(self):
-        with patch('appearance.random.randrange',side_effect=[2,1,12345]):
+        with patch('appearance.random.randrange',side_effect=[2,12345]):
             self.assertEqual(Appearance.random(),Appearance(0,2,1,12345))
 
     def test_all_six_looks_are_distinct_and_render_all_poses(self):
         digests=set()
         rng_state=random.getstate()
         for style in range(1):
-            for coat in range(3):
-                for fur in range(2):
+            for coat in range(4):
+                for fur in range(1):
                     look=Appearance(style,coat,fur,7128)
                     for state in ('walk','sit','eat','sleep','wake','lie','zoomies'):
                         image=QImage(160,112,QImage.Format_ARGB32)
@@ -224,7 +224,7 @@ class BehaviorTests(unittest.TestCase):
                         self.assertTrue(any(image.pixelColor(x,80).alpha() for x in range(160)))
                         if state=='walk':
                             digests.add(hashlib.sha256(image.constBits()).hexdigest())
-        self.assertEqual(len(digests),6)
+        self.assertEqual(len(digests),4)
         self.assertEqual(random.getstate(),rng_state)
 
     def test_zoomies_respect_space_needs_and_stop(self):
@@ -411,8 +411,8 @@ class BehaviorTests(unittest.TestCase):
         rig=Suspension((139,45),-1)
         rig.angles=[-.6,-.2,.2,.1]
         for style in range(1):
-            for coat in range(3):
-                for fur in range(2):
+            for coat in range(4):
+                for fur in range(1):
                     image=QImage(160,112,QImage.Format_ARGB32_Premultiplied)
                     image.fill(Qt.transparent)
                     p=QPainter(image)
@@ -492,7 +492,7 @@ class BehaviorTests(unittest.TestCase):
         self.assertGreater(rig.scruff,.99)
         self.assertLess(Suspension((40,65)).scruff,.01)
         self.assertLess(Suspension((139,45)).scruff,.01)
-        for coat in range(3):
+        for coat in range(4):
             images=[]
             for guilty in (0,1,Suspension((139,45)).scruff):
                 image=QImage(160,112,QImage.Format_ARGB32_Premultiplied)
@@ -512,17 +512,16 @@ class BehaviorTests(unittest.TestCase):
             boxes=dialog.findChildren(QComboBox)
             observed.append(len(boxes))
             boxes[0].setCurrentIndex(2)
-            boxes[1].setCurrentIndex(1)
             preview=dialog.findChild(AppearancePreview)
             observed.append(preview.appearance)
             dialog.accept()
         QTimer.singleShot(0,edit)
         manager.appearance_dialog(self.pup)
-        self.assertEqual(observed[0],2)
+        self.assertEqual(observed[0],1)
         self.assertEqual(self.pup.appearance,observed[1])
         self.assertEqual(self.pup.appearance.style,0)
         self.assertEqual(self.pup.appearance.coat,2)
-        self.assertEqual(self.pup.appearance.fur,1)
+        self.assertEqual(self.pup.appearance.fur,0)
         original=self.pup.appearance
         def cancel():
             dialog=self.app.activeModalWidget()
@@ -561,6 +560,8 @@ class BehaviorTests(unittest.TestCase):
         self.pup.ground=lambda:(0,800,1200)
         self.pup.xf,self.pup.yf=300,702
         self.pup.feed();self.pup.feed()
+        self.now=self.pup.flight_started+2.2
+        self.pup.tick(self.now)
         self.now=self.pup.deadline
         self.pup.tick(self.now)
         self.assertEqual(self.pup.state,'to_bed')
@@ -611,8 +612,8 @@ class BehaviorTests(unittest.TestCase):
         self.assertTrue(self.pup.pending_feed)
 
     def test_chubby_silhouette_differs_for_every_coat_and_fur(self):
-        for coat in range(3):
-            for fur in range(2):
+        for coat in range(4):
+            for fur in range(1):
                 images=[]
                 for chubby in (0,1):
                     image=QImage(160,112,QImage.Format_ARGB32_Premultiplied)
@@ -641,7 +642,7 @@ class BehaviorTests(unittest.TestCase):
 
     def test_larger_models_and_ears_do_not_cross_support_when_eating(self):
         for style in range(1):
-            for fur in range(2):
+            for fur in range(1):
                 for phase in (0,.2,.6,.9):
                     image=QImage(160,112,QImage.Format_ARGB32)
                     image.fill(Qt.transparent)
@@ -650,6 +651,64 @@ class BehaviorTests(unittest.TestCase):
                     p.end()
                     self.assertTrue(all(image.pixelColor(x,y).alpha()<30
                                         for y in range(99,112) for x in range(160)))
+
+    def test_all_four_dragon_colors_and_flames_are_distinct(self):
+        self.assertEqual(FIRE_COLORS,('#ff8a24','#ed3b28','#ffe138','#438cff'))
+        hashes=set()
+        for coat in range(4):
+            for state in ('walk','sit','sleep','wake','fly_meal','fire','eat'):
+                image=QImage(200,112,QImage.Format_ARGB32_Premultiplied)
+                image.fill(Qt.transparent);p=QPainter(image)
+                draw_dog(p,state,.5,0,.4,Appearance(0,coat,0,1));p.end()
+                self.assertTrue(any(image.pixelColor(x,70).alpha() for x in range(160)))
+                if state=='walk':hashes.add(hashlib.sha256(image.constBits()).hexdigest())
+            image=QImage(190,70,QImage.Format_ARGB32_Premultiplied)
+            image.fill(Qt.transparent);p=QPainter(image);flame(p,.8,coat);p.end()
+            c=image.pixelColor(75,35)
+            if coat==3:self.assertGreater(c.blue(),c.red())
+            elif coat==1:self.assertGreater(c.red(),c.green())
+            elif coat==2:self.assertGreater(c.green(),c.blue())
+        self.assertEqual(len(hashes),4)
+
+    def test_fire_can_be_triggered_but_not_during_sleep_and_effect_cleans_up(self):
+        self.assertTrue(self.pup.breathe_fire(self.now))
+        self.assertEqual(self.pup.state,'fire')
+        self.assertIsNotNone(self.pup.flame)
+        self.assertFalse(self.pup.breathe_fire(self.now))
+        self.pup.flame.phase=2.4;self.pup.flame.advance()
+        self.assertFalse(self.pup.flame.isVisible())
+        self.now=self.pup.deadline;self.pup.tick(self.now)
+        self.assertEqual(self.pup.state,'walk')
+        self.pup.start_sleep(self.now)
+        self.assertFalse(self.pup.breathe_fire(self.now))
+
+    def test_grab_or_sleep_interrupts_flight_without_leaving_village_or_fire(self):
+        self.pup.feed();scene=self.pup.village
+        self.pup.start_sleep(self.now)
+        self.assertIsNone(self.pup.village)
+        self.assertFalse(scene.isVisible())
+        self.pup.wake(self.now,dragging=True)
+        self.pup.feed()
+        self.pup.press_offset=QPointF(108,49).toPoint()
+        self.pup.begin_drag(QPointF(400,300).toPoint())
+        self.assertIsNone(self.pup.village)
+        self.assertIsNone(self.pup.flame)
+        self.pup.end_drag()
+
+    def test_hunt_and_village_fit_work_area_in_both_directions(self):
+        self.pup.ground=lambda:(0,800,1200)
+        for x in (20,1020):
+            self.pup.clear_village();self.pup.state='walk';self.pup.xf=x
+            self.pup.feed()
+            self.assertGreaterEqual(self.pup.village.x(),0)
+            self.assertLessEqual(self.pup.village.x()+190,1200)
+            self.assertEqual(self.pup.village.y()+85,800)
+
+    def test_treasure_and_village_draw_on_their_support_without_bowl(self):
+        for width,height,draw in ((144,34,lambda p:treasure(p)),(190,85,lambda p:village(p,1,.3))):
+            image=QImage(width,height,QImage.Format_ARGB32_Premultiplied)
+            image.fill(Qt.transparent);p=QPainter(image);draw(p);p.end()
+            self.assertTrue(any(image.pixelColor(x,height-2).alpha() for x in range(width)))
 
 
 if __name__ == '__main__':

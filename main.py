@@ -1,4 +1,4 @@
-"""Таксон — маленькие таксы на рабочем столе Windows."""
+"""Дракарий — маленькие драконы на рабочем столе Windows."""
 from __future__ import annotations
 import argparse
 import ctypes
@@ -19,10 +19,55 @@ from PySide6.QtWidgets import (QApplication, QWidget, QMenu, QSystemTrayIcon,
 from artwork import draw_bed, draw_dog, rear_drop_offset, WALK_SPEED, RUN_SPEED
 from appearance import Appearance, STYLES, COATS, FURS
 from dragging import Suspension, draw_hanging
+from dragon_art import flame as draw_flame, village as draw_village
 
-DATA = Path(os.environ.get('LOCALAPPDATA', str(Path.home()))) / 'Takson'
+DATA = Path(os.environ.get('LOCALAPPDATA', str(Path.home()))) / 'Drakarium'
 SLEEP_SECONDS = 20 * 60
 DEFAULT_DROPPING_MINUTES = 180
+
+
+class Village(QWidget):
+    def __init__(self,x,floor,direction):
+        super().__init__(None,Qt.Tool|Qt.FramelessWindowHint|Qt.WindowStaysOnTopHint|Qt.WindowDoesNotAcceptFocus|Qt.WindowTransparentForInput)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setFixedSize(190,85)
+        self.phase,self.progress,self.direction=0.,0.,direction
+        self.move(round(x),round(floor-85));self.show()
+
+    @property
+    def eaten_count(self):
+        return sum(70+i*22-min(self.phase,2.2)*6-self.progress*175<16 for i in range(5))
+
+    def paintEvent(self,event):
+        p=QPainter(self);p.setRenderHint(QPainter.Antialiasing)
+        draw_village(p,self.phase,self.progress,self.direction)
+
+
+class FireBreath(QWidget):
+    def __init__(self,owner):
+        super().__init__(None,Qt.Tool|Qt.FramelessWindowHint|Qt.WindowStaysOnTopHint|Qt.WindowDoesNotAcceptFocus|Qt.WindowTransparentForInput)
+        self.owner=owner;self.phase=0.
+        self.setAttribute(Qt.WA_TranslucentBackground);self.setFixedSize(190,70)
+        self.timer=QTimer(self);self.timer.timeout.connect(self.advance);self.timer.start(33)
+        self.advance();self.show()
+
+    def advance(self):
+        self.phase+=.033
+        pet=self.owner
+        mouth_y=90 if pet.state=='eat' else 50
+        mouth_x=140 if pet.state=='eat' else 148
+        x=pet.xf+(mouth_x if pet.direction>0 else 160-mouth_x-190)
+        self.move(round(x),round(pet.yf+pet.flight_offset+mouth_y-35))
+        self.update()
+        if self.phase>=2.4:self.close()
+
+    def closeEvent(self,event):
+        self.timer.stop();super().closeEvent(event)
+
+    def paintEvent(self,event):
+        p=QPainter(self);p.setRenderHint(QPainter.Antialiasing)
+        if self.owner.direction<0:p.translate(190,0);p.scale(-1,1)
+        draw_flame(p,self.phase,self.owner.appearance.coat)
 
 
 def setting_int(value, default, minimum, maximum):
@@ -170,7 +215,7 @@ class Pup(QWidget):
         self.has_eaten=(saved or {}).get('has_eaten',False) is True
         self.bed_target_x=None
         value = (saved or {}).get('name')
-        self.name = value.strip()[:40] if isinstance(value,str) and value.strip() else f'Такса {len(getattr(manager,"pups",[]))+1}'
+        self.name = value.strip()[:40] if isinstance(value,str) and value.strip() else f'Дракон {len(getattr(manager,"pups",[]))+1}'
         self.appearance = Appearance.restore((saved or {}).get('appearance'))
         self.ear_angle = 0.
         self.ear_velocity = 0.
@@ -191,6 +236,15 @@ class Pup(QWidget):
         self.press_position = None
         self.press_offset = None
         self.bed = None
+        self.village=None
+        self.flame=None
+        self.flight_offset=0.
+        self.flight_started=0.
+        self.flight_origin=(0.,0.)
+        self.flight_target=(0.,0.)
+        self.flight_anchor=None
+        self.meal_started=0.
+        self.next_fire=time.monotonic()+random.uniform(75,150)
         self.wake_started = 0.
         self.awake_until = 0.
         self.pending_feed = False
@@ -247,6 +301,44 @@ class Pup(QWidget):
             self.bed = None
         self.bed_target_x=None
 
+    def clear_village(self):
+        if self.village:self.village.close();self.village=None
+        if self.flame:self.flame.close();self.flame=None
+        self.flight_offset=0.
+
+    def breathe_fire(self,now=None):
+        now=time.monotonic() if now is None else now
+        if self.drag is not None or self.state in ('sleep','wake','to_bed','fly_meal','fall','settle') or self.overfeed:
+            return False
+        if self.flame and self.flame.isVisible():return False
+        self.next_fire=now+random.uniform(75,150)
+        self.flame=FireBreath(self)
+        if self.state!='eat':self.state,self.deadline='fire',now+2.4
+        return True
+
+    def launch_hunt(self,now=None):
+        now=time.monotonic() if now is None else now
+        self.clear_village()
+        left,floor,right=self.ground()
+        anchor=self.anchor
+        if anchor and anchor[3]-anchor[1]>=480:
+            _,left,floor,right=anchor
+        else:anchor=None
+        self.direction=1 if right-(self.xf+160)>=self.xf-left else -1
+        if self.direction>0:
+            target=max(left,min(right-316,self.xf+80))
+            village_x=target+126
+        else:
+            target=min(right-160,max(left+156,self.xf-80))
+            village_x=target-156
+        self.flight_origin=(self.xf,self.yf)
+        self.flight_target=(target,floor-98)
+        self.flight_anchor=anchor
+        self.flight_started=now
+        self.state='fly_meal'
+        self.village=Village(village_x,floor,self.direction)
+        self.raise_()
+
     def drag_image(self, state='hang_body', factor=1.):
         image=QImage(480,336,QImage.Format_ARGB32_Premultiplied)
         image.fill(Qt.transparent)
@@ -263,6 +355,7 @@ class Pup(QWidget):
         return image
 
     def begin_drag(self, cursor):
+        self.clear_village()
         self.finish_release()
         self.drag_snapshot=self.drag_image(self.state)
         self.wake(dragging=True)
@@ -291,7 +384,7 @@ class Pup(QWidget):
             self.move(round(self.xf),round(self.yf))
 
     def place_normal(self):
-        self.move(round(self.xf-self.canvas_padding[0]),round(self.yf-self.canvas_padding[1]))
+        self.move(round(self.xf-self.canvas_padding[0]),round(self.yf+self.flight_offset-self.canvas_padding[1]))
 
     def serialize(self, now=None):
         now = time.monotonic() if now is None else now
@@ -311,7 +404,7 @@ class Pup(QWidget):
         left,_,right = self.ground()
         if self.anchor:
             _,left,_,right = self.anchor
-        return not self.overfeed and right-left >= 420 and self.energy >= 55 and self.hunger < 45 and self.state not in ('sleep','wake','eat','poop','to_bed') and self.drag is None
+        return not self.overfeed and right-left >= 420 and self.energy >= 55 and self.hunger < 45 and self.state not in ('sleep','wake','eat','poop','to_bed','fly_meal','fire') and self.drag is None
 
     def start_zoomies(self, now=None):
         now = time.monotonic() if now is None else now
@@ -336,6 +429,7 @@ class Pup(QWidget):
 
     def start_sleep(self, now=None, duration=SLEEP_SECONDS):
         now = time.monotonic() if now is None else now
+        self.clear_village()
         self.clear_bed()
         self.state, self.deadline = 'sleep', now+duration
         self.pending_feed = False
@@ -382,6 +476,9 @@ class Pup(QWidget):
 
     def feed(self):
         if self.drag is None:
+            if self.state=='fly_meal':
+                self.add_extra_food()
+                return
             if self.state=='eat':
                 self.add_extra_food()
                 self.deadline=min(self.deadline,time.monotonic()+.8)
@@ -398,8 +495,7 @@ class Pup(QWidget):
                 return
             if self.has_eaten and self.hunger<20:
                 self.add_extra_food()
-            self.state = 'eat'
-            self.deadline = time.monotonic()+(.8 if self.overfeed else 5)
+            self.launch_hunt()
 
     def ground(self):
         s = QApplication.screenAt(QPoint(round(self.xf+80),round(self.yf+70))) or QApplication.primaryScreen()
@@ -416,6 +512,10 @@ class Pup(QWidget):
         self.animate_ears(dt)
         self.hunger = min(100, self.hunger + dt*100/(self.manager.minutes*60)*(.12 if self.state == 'sleep' else 1))
         self.refresh_tooltip()
+        if self.village:
+            self.village.phase+=dt
+            if self.state=='eat':self.village.progress=min(1,(now-self.meal_started)/5)
+            self.village.update()
         if self.drag is not None:
             self.suspension.step(dt,self.drag_cursor)
             self.place_drag(QPoint(round(self.drag_cursor[0]),round(self.drag_cursor[1])))
@@ -423,6 +523,19 @@ class Pup(QWidget):
             return
         if self.release_rig and now-self.release_started >= .35:
             self.finish_release()
+        if self.state=='fly_meal':
+            progress=min(1,max(0,(now-self.flight_started)/2.2))
+            t=progress*progress*(3-2*progress)
+            self.xf=self.flight_origin[0]+(self.flight_target[0]-self.flight_origin[0])*t
+            self.yf=self.flight_origin[1]+(self.flight_target[1]-self.flight_origin[1])*t
+            self.flight_offset=-math.sin(progress*math.pi)*42
+            if progress>=1-1e-8:
+                self.flight_offset=0
+                self.anchor=self.flight_anchor
+                self.state='eat';self.meal_started=now
+                self.deadline=now+(.8 if self.overfeed else 5)
+                self.breathe_fire(now)
+            self.place_normal();self.update();return
         left, floor, right = self.ground()
         previous_x, previous_y = self.xf,self.yf
         if self.anchor:
@@ -500,12 +613,15 @@ class Pup(QWidget):
         elif self.state == 'eat':
             self.hunger = max(0, self.hunger-dt*24)
             if now >= self.deadline:
+                self.clear_village()
                 self.digest_at = now+random.uniform(45,90)
                 self.has_eaten=True
                 if self.overfeed:
                     self.head_to_bed(now)
                 else:
                     self.start_sitting(now)
+        elif self.state=='fire':
+            if now>=self.deadline:self.state,self.deadline='walk',now+8
         elif self.state == 'poop':
             if now >= self.deadline:
                 center = self.xf+rear_drop_offset(self.appearance,self.direction)
@@ -545,6 +661,10 @@ class Pup(QWidget):
                                             (self.xf >= upper and self.direction > 0)):
             self.direction *= -1
         self.place_normal()
+        if self.village and self.state=='eat':
+            self.village.move(self.village.pos()+QPoint(round(self.xf-previous_x),round(self.yf-previous_y)))
+        if now>=self.next_fire and self.state in ('walk','sit') and not self.overfeed:
+            self.breathe_fire(now)
         self.update()
 
     def mousePressEvent(self, e):
@@ -595,6 +715,7 @@ class Pup(QWidget):
             self.yf = min(self.yf, floor-98)
 
     def closeEvent(self, event):
+        self.clear_village()
         self.clear_bed()
         super().closeEvent(event)
 
@@ -637,7 +758,7 @@ class Pup(QWidget):
             p.setBrush(QColor('#fff4d7'))
             p.drawRoundedRect(41,3,82,24,10,10)
             p.setPen(QColor('#6d452b'))
-            p.drawText(47,20,'Хочу есть…')
+            p.drawText(47,20,'Голод')
         p.setPen(Qt.NoPen)
         p.save()
         if self.direction < 0:
@@ -655,10 +776,10 @@ class Pup(QWidget):
         p.restore()
         if self.state == 'eat':
             p.setPen(QColor('#81562f'))
-            p.drawText(65,32,'ням!')
+            p.drawText(65,32,'')
         if self.drag is not None:
             p.setPen(QColor('#4b7979'))
-            p.drawText(54,35,'уиии!')
+            p.drawText(54,35,'')
 
 
 class Manager:
@@ -682,13 +803,12 @@ class Manager:
         pix = QPixmap(64,64)
         pix.fill(Qt.transparent)
         painter = QPainter(pix)
-        painter.setBrush(QColor('#a75b2c'))
-        painter.setPen(Qt.NoPen)
-        painter.drawRoundedRect(5,25,45,20,8,8)
-        painter.drawEllipse(40,14,20,24)
+        painter.scale(.4,.4)
+        draw_dog(painter,'sit',0,appearance=Appearance(0,1,0,1))
         painter.end()
+        app.setWindowIcon(QIcon(pix))
         self.tray = QSystemTrayIcon(QIcon(pix),app)
-        self.tray.setToolTip('Таксон — таксы на рабочем столе')
+        self.tray.setToolTip('Дракарий — драконы на рабочем столе')
         self.tray.setContextMenu(self.menu())
         self.tray.show()
         states = saved.get('pups',[{}])
@@ -722,19 +842,20 @@ class Manager:
         self.droppings = [w for w in self.droppings if isValid(w)]
     def menu(self, pup=None):
         m = QMenu()
-        m.addAction('Таксон • настольные таксы').setEnabled(False)
+        m.addAction('Дракарий • настольные драконы').setEnabled(False)
         m.addSeparator()
-        m.addAction('Добавить таксу',lambda:self.add())
+        m.addAction('Добавить дракона',lambda:self.add())
         m.addAction('Покормить',lambda:[p.feed() for p in ([pup] if pup else self.pups)])
+        m.addAction('Выдохнуть огонь',lambda:[p.breathe_fire() for p in ([pup] if pup else self.pups)])
         m.addAction('Уложить спать',lambda:self.sleep(pup))
         if pup:
             m.addAction('Внешность…',lambda:self.appearance_dialog(pup))
             zoom = m.addAction('Устроить zoomies!',lambda:pup.start_zoomies())
             zoom.setEnabled(pup.can_zoom())
-        m.addAction('Убрать за собаками',self.clean)
+        m.addAction('Убрать за драконами',self.clean)
         m.addAction('Настройки…',self.settings)
         if pup and len(self.pups)>1:
-            m.addAction('Убрать эту таксу',lambda:self.remove(pup))
+            m.addAction('Убрать этого дракона',lambda:self.remove(pup))
         m.addSeparator()
         m.addAction('Выход',self.app.quit)
         return m
@@ -753,7 +874,7 @@ class Manager:
         self.droppings.clear()
     def settings(self):
         d = QDialog()
-        d.setWindowTitle('Таксон · Настройки')
+        d.setWindowTitle('Дракарий · Настройки')
         form = QFormLayout(d)
         interval = QSpinBox()
         interval.setRange(1,120)
@@ -773,7 +894,7 @@ class Manager:
         for i,pup in enumerate(self.pups):
             field = QLineEdit(pup.name)
             field.setMaxLength(40)
-            form.addRow(f'Имя таксы {i+1} ({COATS[pup.appearance.coat]}):',field)
+            form.addRow(f'Имя дракона {i+1} ({COATS[pup.appearance.coat]}):',field)
             name_fields.append((pup,field))
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(d.accept)
@@ -784,7 +905,7 @@ class Manager:
             self.dropping_minutes = cleanup.value()
             self.show_names = names_visible.isChecked()
             for i,(pup,field) in enumerate(name_fields):
-                pup.name = field.text().strip() or f'Такса {i+1}'
+                pup.name = field.text().strip() or f'Дракон {i+1}'
                 pup.refresh_tooltip()
             from shiboken6 import isValid
             for dropping in self.droppings:
@@ -793,11 +914,10 @@ class Manager:
             self.save()
     def appearance_dialog(self,pup):
         d = QDialog()
-        d.setWindowTitle('Таксон · Внешность')
+        d.setWindowTitle('Дракарий · Внешность')
         form = QFormLayout(d)
         boxes = []
-        for title,options,value in (('Окрас:',COATS,pup.appearance.coat),
-                                    ('Шерсть:',FURS,pup.appearance.fur)):
+        for title,options,value in (('Окрас:',COATS,pup.appearance.coat),):
             box = QComboBox()
             box.addItems(options)
             box.setCurrentIndex(value)
@@ -807,7 +927,7 @@ class Manager:
         form.addRow(preview)
         def refresh_preview():
             preview.appearance=Appearance(coat=boxes[0].currentIndex(),
-                fur=boxes[1].currentIndex(),seed=pup.appearance.seed)
+                fur=0,seed=pup.appearance.seed)
             preview.update()
         for box in boxes:
             box.currentIndexChanged.connect(refresh_preview)
@@ -838,43 +958,41 @@ def main():
     if sys.platform == 'win32' and not args.smoke_test:
         kernel = ctypes.windll.kernel32
         kernel.CreateMutexW.restype = wintypes.HANDLE
-        mutex = kernel.CreateMutexW(None,False,'Local\\TaksonDesktopPets')
+        mutex = kernel.CreateMutexW(None,False,'Local\\DrakariumDesktopPets')
         if kernel.GetLastError() == 183:
             return 0
     app = QApplication(sys.argv[:1])
     app.setFont(QFont('Segoe UI',9))
     app.setQuitOnLastWindowClosed(False)
-    app.setApplicationName('Таксон')
+    app.setApplicationName('Дракарий')
     manager = Manager(app)
     if args.smoke_test:
         while len(manager.pups)<4:
             manager.add()
         for i,pup in enumerate(manager.pups):
-            pup.appearance = Appearance(i%4,i%3,i%2,1729+i)
+            pup.appearance=Appearance(0,i%4,0,1729+i)
             pup.feed()
-        QTimer.singleShot(300,lambda:[p.start_sleep() for p in manager.pups])
-        QTimer.singleShot(600,lambda:[p.wake() for p in manager.pups])
         pet=manager.pups[0]
+        QTimer.singleShot(3300,pet.feed)
+        QTimer.singleShot(8000,manager.pups[1].start_sleep)
+        QTimer.singleShot(8500,manager.pups[1].wake)
+        QTimer.singleShot(8500,manager.pups[2].breathe_fire)
+        QTimer.singleShot(8500,manager.pups[3].breathe_fire)
+        grabbed=manager.pups[1]
         def smoke_grab():
-            offset=QPoint(108 if pet.direction>0 else 52,49)
-            pet.press_offset=offset
-            pet.begin_drag(QPoint(round(pet.xf),round(pet.yf))+offset)
-        def smoke_move(dx,dy):
-            if pet.drag_cursor:
-                pet.place_drag(QPoint(round(pet.drag_cursor[0]+dx),round(pet.drag_cursor[1]+dy)))
-        QTimer.singleShot(850,smoke_grab)
-        QTimer.singleShot(1300,lambda:smoke_move(90,-20))
-        QTimer.singleShot(1900,lambda:smoke_move(-50,25))
-        QTimer.singleShot(2300,pet.end_drag)
-        QTimer.singleShot(2600,pet.feed)
-        QTimer.singleShot(2800,pet.feed)
-        QTimer.singleShot(6000,lambda:[p.start_zoomies() for p in manager.pups])
-        def smoke_recover():
-            if pet.overfeed:
-                pet.start_sleep()
-                pet.deadline=time.monotonic()
-        QTimer.singleShot(10000,smoke_recover)
-        QTimer.singleShot(11800,app.quit)
+            offset=QPoint(108 if grabbed.direction>0 else 52,49)
+            grabbed.press_offset=offset
+            grabbed.begin_drag(QPoint(round(grabbed.xf),round(grabbed.yf))+offset)
+        def smoke_move():
+            grabbed.place_drag(QPoint(round(grabbed.drag_cursor[0]+60),round(grabbed.drag_cursor[1]-25)))
+        QTimer.singleShot(9000,smoke_grab)
+        QTimer.singleShot(9400,smoke_move)
+        QTimer.singleShot(10000,grabbed.end_drag)
+        def recover():
+            pet.start_sleep()
+            pet.deadline=time.monotonic()
+        QTimer.singleShot(11000,recover)
+        QTimer.singleShot(12500,app.quit)
     result = app.exec()
     if mutex:
         ctypes.windll.kernel32.CloseHandle(wintypes.HANDLE(mutex))

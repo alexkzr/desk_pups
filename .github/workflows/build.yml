@@ -1,0 +1,22 @@
+name: Windows executable
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r requirements.txt
+      - run: python -m unittest -v test_behavior
+      - run: python main.py --smoke-test
+      - run: python -m PyInstaller --noconfirm --clean --onefile --windowed --hidden-import __future__ --name Takson main.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Takson-Windows
+          path: dist/Takson.exe

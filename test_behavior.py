@@ -693,6 +693,25 @@ class BehaviorTests(unittest.TestCase):
                 for y in range(67,85):
                     self.assertEqual(im.pixelColor(x,y).alpha(),255)
 
+    def test_sleep_roll_supports_lean_and_chubby_pets_and_four_visible_feet(self):
+        from sleep_motion import draw_back_sleep
+        images=[]
+        for fat in (0,1):
+            im=QImage(160,112,QImage.Format_ARGB32_Premultiplied)
+            im.fill(Qt.transparent);p=QPainter(im)
+            draw_dog(p,'sleep',0,appearance=Appearance(),sleep_elapsed=422,chubby=fat)
+            p.end();images.append(im)
+        def area(im):
+            return sum(im.pixelColor(x,y).alpha()>128 for x in range(160) for y in range(112))
+        self.assertGreater(area(images[1]),area(images[0])*1.12)
+        im=QImage(160,112,QImage.Format_ARGB32_Premultiplied)
+        im.fill(Qt.transparent);p=QPainter(im);artist=Artist(p,Appearance(),0,0)
+        with patch.object(artist,'fill',wraps=artist.fill) as fill:
+            draw_back_sleep(p,artist,422)
+            feet=[c for c in fill.call_args_list if len(c.args)>1 and c.args[1] in (42,43,44)]
+            self.assertEqual(len(feet),4)
+        p.end()
+
 
 if __name__ == '__main__':
     unittest.main()

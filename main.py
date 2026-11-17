@@ -15,8 +15,24 @@ from PySide6.QtCore import Qt, QTimer, QPoint
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QIcon, QPixmap, QFont
 from PySide6.QtWidgets import (QApplication, QWidget, QMenu, QSystemTrayIcon,
     QDialog, QFormLayout, QSpinBox, QDialogButtonBox, QMessageBox)
+from artwork import draw_bed, draw_dog
 
 DATA = Path(os.environ.get('LOCALAPPDATA', str(Path.home()))) / 'Takson'
+SLEEP_SECONDS = 20 * 60
+
+
+class Bed(QWidget):
+    def __init__(self):
+        super().__init__(None, Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
+                         | Qt.WindowDoesNotAcceptFocus | Qt.WindowTransparentForInput)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setFixedSize(144, 34)
+        self.opacity = 1.
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        draw_bed(p, self.opacity)
 
 
 def bounded(value, fallback):
@@ -115,6 +131,15 @@ class Pup(QWidget):
         self.digest_at = None
         self.anchor = None
         self.drag = None
+        self.press_position = None
+        self.press_offset = None
+        self.bed = None
+        self.wake_started = 0.
+        self.awake_until = 0.
+        self.pending_feed = False
+        self.sit_pose = random.randrange(4)
+        self.next_sit_pose = time.monotonic()+random.uniform(4,7)
+        self.sit_transition = None
         self.velocity = 0.
         self.last = time.monotonic()
         r = QApplication.primaryScreen().availableGeometry()
@@ -122,9 +147,69 @@ class Pup(QWidget):
         self.yf = float(r.bottom()+1-98)
         self.move(round(self.xf), round(self.yf))
         self.show()
+        # Unlike hunger, sleep duration is in seconds and may exceed 100.
+        try:
+            remaining = max(0,min(SLEEP_SECONDS,float((saved or {}).get('sleep_remaining',0))))
+        except (ValueError,TypeError):
+            remaining = 0
+        if remaining:
+            self.start_sleep(self.last, remaining)
+
+    def clear_bed(self):
+        if self.bed:
+            self.bed.close()
+            self.bed = None
+
+    def start_sleep(self, now=None, duration=SLEEP_SECONDS):
+        now = time.monotonic() if now is None else now
+        self.clear_bed()
+        self.state, self.deadline = 'sleep', now+duration
+        self.pending_feed = False
+        self.bed = Bed()
+        self.bed.move(round(self.xf+8),round(self.yf+64))
+        self.bed.show()
+        self.raise_()
+
+    def wake(self, now=None, dragging=False):
+        now = time.monotonic() if now is None else now
+        if self.state not in ('sleep','wake'):
+            return
+        self.awake_until = now+60
+        if dragging:
+            self.clear_bed()
+            self.state, self.deadline = 'walk', now+8
+        else:
+            self.state, self.wake_started = 'wake', now
+            self.deadline = now+4.8
+            left, _, right = self.ground()
+            if self.anchor:
+                _,left,_,right = self.anchor
+            # Choose the side with enough room to step out of the bed.
+            self.direction = 1 if right-(self.xf+148) >= self.xf-left else -1
+
+    def start_sitting(self, now):
+        self.state, self.deadline = 'sit', now+random.uniform(32,42)
+        self.next_sit_pose = now+random.uniform(4,7)
+        self.sit_transition = None
+
+    def animated_sit_pose(self, now):
+        if self.sit_transition is not None:
+            t = min(1,max(0,(now-self.sit_transition)/.8))
+            value = self.sit_pose+t*t*(3-2*t)
+            if t >= 1:
+                self.sit_pose = (self.sit_pose+1)%4
+                self.sit_transition = None
+                self.next_sit_pose = now+random.uniform(4,7)
+            return value
+        return float(self.sit_pose)
 
     def feed(self):
         if self.drag is None:
+            if self.state in ('sleep','wake'):
+                self.pending_feed = True
+                if self.state == 'sleep':
+                    self.wake()
+                return
             self.state = 'eat'
             self.deadline = time.monotonic()+5
 
@@ -137,12 +222,13 @@ class Pup(QWidget):
         dt = min(now-self.last, .1)
         self.last = now
         self.phase += dt
-        self.hunger = min(100, self.hunger + dt*100/(self.manager.minutes*60))
+        self.hunger = min(100, self.hunger + dt*100/(self.manager.minutes*60)*(.12 if self.state == 'sleep' else 1))
         self.setToolTip(f'Таксон · Голод {self.hunger:.0f}% · Энергия {self.energy:.0f}%\nПеретащите мышью · ПКМ — меню')
         if self.drag is not None:
             self.update()
             return
         left, floor, right = self.ground()
+        previous_x, previous_y = self.xf,self.yf
         if self.anchor:
             matching = [s for s in self.manager.surfaces if s[0] == self.anchor[0]]
             predicted_x = self.xf + (matching[0][1]-self.anchor[1] if matching else 0)
@@ -169,12 +255,33 @@ class Pup(QWidget):
                 self.velocity = 0
         elif not self.anchor:
             self.yf = floor-98
-        if self.state == 'eat':
+        # Keep a bed on a moving support while its dog is stepping out.
+        if self.bed and self.state == 'wake':
+            self.bed.move(self.bed.pos()+QPoint(round(self.xf-previous_x),round(self.yf-previous_y)))
+        if self.bed and self.state == 'sleep':
+            self.bed.move(round(self.xf+8),round(self.yf+64))
+        if self.state == 'sleep':
+            self.energy = min(100, self.energy+dt*2)
+            if now >= self.deadline:
+                self.wake(now)
+        elif self.state == 'wake':
+            elapsed = now-self.wake_started
+            if elapsed > .9:
+                self.xf += self.direction*38*dt
+            if self.bed:
+                self.bed.opacity = max(0, min(1, (4.8-elapsed)/.8))
+                self.bed.update()
+            if now >= self.deadline:
+                self.clear_bed()
+                self.state,self.deadline = 'walk',now+10
+                if self.pending_feed:
+                    self.pending_feed = False
+                    self.feed()
+        elif self.state == 'eat':
             self.hunger = max(0, self.hunger-dt*24)
             if now >= self.deadline:
                 self.digest_at = now+random.uniform(45,90)
-                self.state = 'sit'
-                self.deadline = now+5
+                self.start_sitting(now)
         elif self.state == 'poop':
             if now >= self.deadline:
                 self.manager.droppings.append(Dropping(round(self.xf+35), round(self.yf+98)))
@@ -184,38 +291,54 @@ class Pup(QWidget):
             self.feed()
         elif self.digest_at and now >= self.digest_at:
             self.state, self.deadline = 'poop', now+3
-        elif self.state == 'sleep':
-            self.energy = min(100, self.energy+dt*2)
-            if now >= self.deadline or self.energy >= 100:
-                self.state, self.deadline = 'walk', now+10
         else:
             self.energy = max(0,self.energy-dt*.13)
-            if self.energy < 15:
-                self.state, self.deadline = 'sleep', now+45
+            if self.energy < 15 and now >= self.awake_until:
+                self.start_sleep(now)
             elif now >= self.deadline:
-                self.state = random.choices(['walk','sit','lie','sleep'], [55,20,20,5])[0]
+                self.state = random.choices(['walk','sit','lie','sleep'], [55,20,20,5 if now >= self.awake_until else 0])[0]
                 self.deadline = now+random.uniform(8,22)
+                if self.state == 'sleep':
+                    self.start_sleep(now)
+                elif self.state == 'sit':
+                    self.start_sitting(now)
             if self.state == 'walk':
                 self.xf += self.direction*38*dt
-        self.xf = max(left-12,min(right-148,self.xf))
-        if self.xf <= left-12 or self.xf >= right-148:
+        if self.state == 'sit' and self.sit_transition is None and now >= self.next_sit_pose:
+            self.sit_transition = now
+        lower,upper = left-4,max(left-4,right-156)
+        self.xf = max(lower,min(upper,self.xf))
+        if self.state in ('walk','wake') and ((self.xf <= lower and self.direction < 0) or
+                                            (self.xf >= upper and self.direction > 0)):
             self.direction *= -1
         self.move(round(self.xf), round(self.yf))
         self.update()
 
     def mousePressEvent(self, e):
         if e.button() == Qt.LeftButton:
-            self.drag = e.globalPosition().toPoint()-self.pos()
-            self.anchor = None
+            self.press_position = e.globalPosition().toPoint()
+            self.press_offset = self.press_position-self.pos()
         elif e.button() == Qt.RightButton:
             self.manager.menu(self).exec(e.globalPosition().toPoint())
     def mouseMoveEvent(self, e):
+        if self.press_position is not None and self.drag is None:
+            distance = (e.globalPosition().toPoint()-self.press_position).manhattanLength()
+            if distance >= QApplication.startDragDistance():
+                self.wake(dragging=True)
+                self.drag = self.press_offset
+                self.anchor = None
         if self.drag is not None:
             pos = e.globalPosition().toPoint()-self.drag
             self.xf, self.yf = float(pos.x()), float(pos.y())
             self.move(pos)
     def mouseReleaseEvent(self, e):
         if e.button() != Qt.LeftButton:
+            return
+        self.press_position = None
+        self.press_offset = None
+        if self.drag is None:
+            if self.state == 'sleep':
+                self.wake()
             return
         self.drag = None
         self.velocity = 0
@@ -226,6 +349,10 @@ class Pup(QWidget):
         else:
             left, floor, right = self.ground()
             self.yf = min(self.yf, floor-98)
+
+    def closeEvent(self, event):
+        self.clear_bed()
+        super().closeEvent(event)
 
     def paintEvent(self, event):
         p = QPainter(self)
@@ -244,71 +371,16 @@ class Pup(QWidget):
         if self.direction < 0:
             p.translate(160,0)
             p.scale(-1,1)
-        low = self.state in ('lie','sleep')
-        sitting = self.state == 'sit'
-        bob = math.sin(self.phase*12)*1.7 if self.state == 'walk' else 0
-        p.translate(0,bob)
-        p.setPen(QPen(QColor('#5b2e1b'),6,Qt.SolidLine,Qt.RoundCap))
-        wag = math.sin(self.phase*9)*7
-        if sitting:
-            p.drawLine(62,91,37,94)
-        else:
-            p.drawLine(28,74,14,round(58+wag))
-        p.setPen(Qt.NoPen)
-        p.setBrush(QColor('#7f421f'))
-        for i,x in enumerate(() if sitting else (40,55,99,113)):
-            stride = math.sin(self.phase*11+i*math.pi)*5 if self.state == 'walk' else 0
-            p.drawRoundedRect(round(x+stride),82 if not low else 90,10,16 if not low else 8,4,4)
-        p.setBrush(QColor('#a75b2c'))
-        if sitting:
-            body = QPainterPath()
-            body.moveTo(56,90)
-            body.cubicTo(56,79,72,76,79,67)
-            body.lineTo(94,44)
-            body.cubicTo(103,40,113,47,110,59)
-            body.lineTo(102,90)
-            body.cubicTo(87,98,66,99,56,90)
-            p.drawPath(body)
-            p.drawEllipse(53,77,35,21)
-            p.setBrush(QColor('#7f421f'))
-            p.drawRoundedRect(91,68,9,30,4,4)
-            p.setBrush(QColor('#c17b40'))
-            p.drawRoundedRect(104,65,9,33,4,4)
-            p.drawRoundedRect(98,93,18,5,2,2)
-            p.drawRoundedRect(65,92,21,6,3,3)
-        elif self.state == 'poop':
-            p.drawEllipse(34,71,37,27)
-            p.drawRoundedRect(52,60,70,30,13,13)
-        else:
-            p.drawRoundedRect(25,64 if not low else 77,98,26 if not low else 20,13,13)
-        p.save()
-        if sitting:
-            p.translate(-18,-24)
-        p.setBrush(QColor('#c17b40'))
-        p.drawEllipse(99,49 if not low else 66,33,34)
-        p.drawRoundedRect(119,65 if not low else 80,27,14,6,6)
-        p.setBrush(QColor('#68371f'))
-        p.drawRoundedRect(102,55 if not low else 72,16,35 if not low else 24,8,8)
-        p.setBrush(QColor('#251f21'))
-        p.drawEllipse(139,65 if not low else 80,8,7)
-        eye_y = 60 if not low else 77
-        if self.state == 'sleep':
-            p.setPen(QPen(QColor('#251f21'),2))
-            p.drawLine(123,eye_y+2,128,eye_y+2)
-            p.setPen(Qt.NoPen)
-        else:
-            p.drawEllipse(124,eye_y,4,5)
-        p.setBrush(QColor('#42a89c'))
-        p.drawRoundedRect(115,78 if not low else 89,7,11 if not low else 6,2,2)
-        p.restore()
+        state = self.state
+        elapsed = 0
+        if state == 'wake':
+            elapsed = max(0,time.monotonic()-self.wake_started)
+            state = 'wake' if elapsed < .9 else 'walk'
+        draw_dog(p, state, self.phase, self.animated_sit_pose(time.monotonic()),elapsed)
         p.restore()
         if self.state == 'eat':
-            p.setBrush(QColor('#e9b867'))
-            p.drawEllipse(116,94,35,6)
-            p.setBrush(QColor('#437d91'))
-            p.drawRoundedRect(116,97,35,12,5,5)
             p.setPen(QColor('#81562f'))
-            p.drawText(78,37,'ням!')
+            p.drawText(65,32,'ням!')
         if self.drag is not None:
             p.setPen(QColor('#4b7979'))
             p.drawText(54,35,'уиии!')
@@ -385,7 +457,7 @@ class Manager:
         return m
     def sleep(self,pup):
         for p in ([pup] if pup else self.pups):
-            p.state,p.deadline = 'sleep',time.monotonic()+45
+            p.start_sleep()
     def remove(self,pup):
         self.pups.remove(pup)
         pup.close()
@@ -415,7 +487,7 @@ class Manager:
     def save(self):
         try:
             DATA.mkdir(parents=True,exist_ok=True)
-            (DATA/'state.tmp').write_text(json.dumps({'minutes':self.minutes,'pups':[{'hunger':p.hunger,'energy':p.energy} for p in self.pups]}),encoding='utf-8')
+            (DATA/'state.tmp').write_text(json.dumps({'minutes':self.minutes,'pups':[{'hunger':p.hunger,'energy':p.energy,'sleep_remaining':max(0,p.deadline-time.monotonic()) if p.state == 'sleep' else 0} for p in self.pups]}),encoding='utf-8')
             (DATA/'state.tmp').replace(DATA/'state.json')
         except OSError:
             pass
@@ -438,8 +510,11 @@ def main():
     app.setApplicationName('Таксон')
     manager = Manager(app)
     if args.smoke_test:
-        manager.pups[0].feed()
-        QTimer.singleShot(1500,app.quit)
+        pup = manager.pups[0]
+        pup.feed()
+        QTimer.singleShot(300,pup.start_sleep)
+        QTimer.singleShot(600,pup.wake)
+        QTimer.singleShot(6000,app.quit)
     result = app.exec()
     if mutex:
         ctypes.windll.kernel32.CloseHandle(wintypes.HANDLE(mutex))
